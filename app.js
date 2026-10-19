@@ -416,7 +416,7 @@ $('openData').onclick = () => {
   $('accountInfo').textContent = session
     ? `ログイン中：${session.user.email}（PCとスマホで同期されます）`
     : 'データはこの端末のブラウザだけに保存されています。';
-  $('logoutBtn').hidden = !session;
+  $('logoutBtn').hidden = $('changePwBtn').hidden = !session;
   $('dataDialog').showModal();
 };
 $('exportBtn').onclick = () => {
@@ -490,6 +490,43 @@ $('authForm').addEventListener('submit', async e => {
   }
 });
 
+// ---------- パスワード ----------
+$('forgotBtn').onclick = async () => {
+  const email = $('authEmail').value.trim();
+  if (!email) { authMsg('上の欄にメールアドレスを入れてから押してください', true); $('authEmail').focus(); return; }
+  if (!location.protocol.startsWith('http')) return;
+  $('forgotBtn').disabled = true;
+  authMsg('通信中…');
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  $('forgotBtn').disabled = false;
+  if (error) authMsg(/rate limit/i.test(error.message) ? '送信回数が多すぎます。1時間ほどおいてください' : 'エラー：' + error.message, true);
+  else authMsg('パスワード再設定のメールを送りました。メールのリンクを開くと、新しいパスワードを決める画面が出ます。');
+};
+
+function openPwDialog(title) {
+  $('pwDialog').querySelector('h3').textContent = title;
+  $('newPass').value = $('newPass2').value = '';
+  $('pwMsg').textContent = '';
+  if ($('dataDialog').open) $('dataDialog').close();
+  $('pwDialog').showModal();
+}
+$('changePwBtn').onclick = () => openPwDialog('🔑 パスワードを変更');
+$('pwForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  if ($('newPass').value !== $('newPass2').value) { $('pwMsg').textContent = '2つの入力が一致しません'; return; }
+  $('pwSubmit').disabled = true;
+  $('pwMsg').textContent = '通信中…';
+  const { error } = await sb.auth.updateUser({ password: $('newPass').value });
+  $('pwSubmit').disabled = false;
+  if (error) {
+    $('pwMsg').textContent = /different from the old/i.test(error.message)
+      ? '今と同じパスワードです。別のものにしてください' : 'エラー：' + error.message;
+    return;
+  }
+  $('pwMsg').textContent = '✅ 変更しました。ほかの端末でも、新しいパスワードでログインしてください。';
+  setTimeout(() => $('pwDialog').close(), 2500);
+});
+
 // ---------- 起動 ----------
 function showApp() { $('auth').hidden = true; $('app').hidden = false; render(); }
 function showAuth() { $('app').hidden = true; $('auth').hidden = false; setAuthMode('login'); }
@@ -535,6 +572,8 @@ async function init() {
       } else if (s && !prev) {
         enterApp();
       }
+      // 再設定メールのリンクから開いたとき
+      if (event === 'PASSWORD_RECOVERY') openPwDialog('🔑 新しいパスワードを決める');
     }, 0);
   });
   const { data } = await sb.auth.getSession();

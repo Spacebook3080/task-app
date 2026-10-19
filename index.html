@@ -148,10 +148,27 @@
     <div id="authMsg"></div>
   </form>
   <div class="switch muted">
+    <button id="forgotBtn" type="button">パスワードを忘れた場合</button>
+  </div>
+  <div class="switch muted">
     <span id="authSwitchText">はじめて使う場合は</span>
     <button id="authSwitch" type="button">新規登録</button>
   </div>
 </div>
+
+<dialog id="pwDialog">
+  <h3>🔑 新しいパスワードを決める</h3>
+  <form id="pwForm" style="display:flex;flex-direction:column;gap:10px">
+    <input type="password" id="newPass" placeholder="新しいパスワード（6文字以上）" autocomplete="new-password" minlength="6" required>
+    <input type="password" id="newPass2" placeholder="もう一度入力" autocomplete="new-password" minlength="6" required>
+    <button class="primary" type="submit" id="pwSubmit">変更する</button>
+    <div id="pwMsg" class="muted"></div>
+  </form>
+  <div class="dialog-foot">
+    <span></span>
+    <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
+  </div>
+</dialog>
 
 <div class="wrap" id="app" hidden>
   <header>
@@ -241,7 +258,10 @@
   </div>
   <p class="muted">読み込んだデータは、今のデータに追加されます。</p>
   <div class="dialog-foot">
-    <button class="icon-btn" id="logoutBtn">ログアウト</button>
+    <span style="display:flex;gap:6px">
+      <button class="icon-btn" id="logoutBtn">ログアウト</button>
+      <button class="icon-btn" id="changePwBtn">パスワード変更</button>
+    </span>
     <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
   </div>
 </dialog>
