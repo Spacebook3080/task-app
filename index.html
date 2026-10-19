@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>毎日のタスク</title>
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17181b" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="タスク">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --card: #ffffff;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --line: #e5e3de;
+    --accent: #2f6fdf;
+    --accent-soft: #e6eefc;
+    --high: #d64545;
+    --mid: #d98c1f;
+    --low: #4a9a5b;
+    --done: #9ca3af;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181b;
+      --card: #212328;
+      --text: #e8e8ea;
+      --muted: #9aa0a8;
+      --line: #33363d;
+      --accent: #6b9cf5;
+      --accent-soft: #263452;
+      --high: #ef6b6b;
+      --mid: #e8a64a;
+      --low: #6cc282;
+      --done: #6b7078;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+    font-size: 15px; line-height: 1.5;
+  }
+  .wrap {
+    max-width: 720px; margin: 0 auto;
+    padding: calc(20px + env(safe-area-inset-top)) 16px calc(64px + env(safe-area-inset-bottom));
+  }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  .sync { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
+  .icon-btn {
+    background: none; border: 1px solid var(--line); color: var(--text); white-space: nowrap;
+    border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 14px; font-family: inherit;
+  }
+  .icon-btn:hover { background: var(--card); }
+
+  .datebar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .datebar .date { font-size: 18px; font-weight: 600; flex: 1; text-align: center; }
+  .datebar .date small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
+  .card h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+
+  .progress { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin-top: 8px; }
+  .progress > div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .stats { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .stats b { color: var(--text); font-size: 16px; }
+
+  form.add { display: flex; flex-wrap: wrap; gap: 8px; }
+  form.add input[type=text] { flex: 1 1 260px; }
+  input, select, textarea {
+    font: inherit; font-size: 16px; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button.primary { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font: inherit; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .6; cursor: default; }
+
+  .filters { display: flex; gap: 4px; }
+  .filters button { background: none; border: none; color: var(--muted); font: inherit; font-size: 13px; padding: 2px 8px; border-radius: 6px; cursor: pointer; }
+  .filters button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+  ul.list { list-style: none; margin: 0; padding: 0; }
+  ul.list li {
+    display: flex; align-items: center; gap: 10px; padding: 8px 4px;
+    border-bottom: 1px solid var(--line);
+  }
+  ul.list li:last-child { border-bottom: none; }
+  ul.list li input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; flex: none; }
+  .title { flex: 1; min-width: 0; word-break: break-word; cursor: text; }
+  li.done .title { color: var(--done); text-decoration: line-through; }
+  .pri { width: 4px; align-self: stretch; border-radius: 2px; flex: none; }
+  .pri.high { background: var(--high); } .pri.mid { background: var(--mid); } .pri.low { background: var(--low); }
+  .tag { font-size: 11px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); flex: none; }
+  .tag.overdue { background: transparent; color: var(--high); border: 1px solid var(--high); }
+  .time { font-size: 12px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; flex: none; }
+  li:hover .actions, li:focus-within .actions { opacity: 1; }
+  @media (hover: none) { .actions { opacity: 1; } }
+  .actions button { background: none; border: none; color: var(--muted); cursor: pointer; padding: 4px 6px; border-radius: 6px; font-size: 13px; font-family: inherit; }
+  .actions button:hover { background: var(--bg); color: var(--text); }
+  .empty { color: var(--muted); font-size: 14px; justify-content: center; padding: 12px 0; }
+  .edit-input { flex: 1; }
+
+  textarea.memo { width: 100%; min-height: 80px; resize: vertical; }
+
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text); padding: 20px; width: min(520px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  dialog h3 { margin: 0 0 12px; font-size: 16px; }
+  .days { display: flex; gap: 4px; flex-wrap: wrap; }
+  .days label { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 13px; user-select: none; }
+  .days input { display: none; }
+  .days label:has(input:checked) { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .row input[type=text] { flex: 1 1 200px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .dialog-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+  /* ログイン画面 */
+  #auth { max-width: 380px; margin: 0 auto; padding: calc(64px + env(safe-area-inset-top)) 16px 32px; }
+  #auth h1 { text-align: center; margin-bottom: 24px; }
+  #auth form { display: flex; flex-direction: column; gap: 10px; }
+  #auth .switch { text-align: center; margin-top: 16px; }
+  #auth .switch button { background: none; border: none; color: var(--accent); font: inherit; cursor: pointer; }
+  #authMsg { min-height: 1.5em; font-size: 13px; text-align: center; }
+  #authMsg.err { color: var(--high); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="auth" hidden>
+  <h1>📋 毎日のタスク</h1>
+  <form id="authForm">
+    <input type="email" id="authEmail" placeholder="メールアドレス" autocomplete="email" required>
+    <input type="password" id="authPass" placeholder="パスワード（6文字以上）" autocomplete="current-password" minlength="6" required>
+    <button class="primary" type="submit" id="authSubmit">ログイン</button>
+    <div id="authMsg"></div>
+  </form>
+  <div class="switch muted">
+    <span id="authSwitchText">はじめて使う場合は</span>
+    <button id="authSwitch" type="button">新規登録</button>
+  </div>
+</div>
+
+<div class="wrap" id="app" hidden>
+  <header>
+    <h1>📋 毎日のタスク<span class="sync" id="syncStatus"></span></h1>
+    <div style="display:flex;gap:6px">
+      <button class="icon-btn" id="openRoutines" title="毎日の習慣を設定">🔁 習慣</button>
+      <button class="icon-btn" id="openData" title="設定・バックアップ">⚙</button>
+    </div>
+  </header>
+
+  <div class="datebar">
+    <button class="icon-btn" id="prevDay" aria-label="前の日">◀</button>
+    <div class="date" id="dateLabel"></div>
+    <button class="icon-btn" id="nextDay" aria-label="次の日">▶</button>
+    <button class="icon-btn" id="todayBtn">今日</button>
+  </div>
+
+  <div class="card">
+    <div class="stats">
+      <span>達成 <b id="doneCount">0</b> / <span id="totalCount">0</span></span>
+      <span id="percent">0%</span>
+    </div>
+    <div class="progress"><div id="bar"></div></div>
+  </div>
+
+  <div class="card">
+    <form class="add" id="addForm">
+      <input type="text" id="newTitle" placeholder="やることを入力して Enter" autocomplete="off" enterkeyhint="done" required>
+      <select id="newPri" title="優先度">
+        <option value="high">優先度 高</option>
+        <option value="mid" selected>優先度 中</option>
+        <option value="low">優先度 低</option>
+      </select>
+      <input type="time" id="newTime" title="時間（任意）">
+      <input type="text" id="newTag" placeholder="カテゴリ（任意）" list="tagList" style="flex:0 1 140px">
+      <datalist id="tagList"></datalist>
+      <button class="primary" type="submit">追加</button>
+    </form>
+  </div>
+
+  <div class="card" id="routineCard">
+    <h2>🔁 毎日の習慣 <span class="muted" id="routineCount"></span></h2>
+    <ul class="list" id="routineList"></ul>
+  </div>
+
+  <div class="card">
+    <h2>
+      ✅ タスク
+      <span class="filters" id="filters">
+        <button data-f="all" class="on">すべて</button>
+        <button data-f="open">未完了</button>
+        <button data-f="done">完了</button>
+      </span>
+    </h2>
+    <ul class="list" id="taskList"></ul>
+  </div>
+
+  <div class="card">
+    <h2>📝 メモ</h2>
+    <textarea class="memo" id="memo" placeholder="この日のメモ・振り返り"></textarea>
+  </div>
+</div>
+
+<dialog id="routineDialog">
+  <h3>🔁 毎日の習慣</h3>
+  <p class="muted" style="margin-top:0">ここに登録したものは、選んだ曜日に自動で表示されます。</p>
+  <form class="row" id="routineForm">
+    <input type="text" id="routineTitle" placeholder="例：ストレッチ、日記を書く" required autocomplete="off">
+    <button class="primary" type="submit">追加</button>
+  </form>
+  <div class="days" id="routineDays"></div>
+  <ul class="list" id="routineEditList" style="margin-top:12px"></ul>
+  <div class="dialog-foot">
+    <span></span>
+    <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
+  </div>
+</dialog>
+
+<dialog id="dataDialog">
+  <h3>⚙ 設定</h3>
+  <p class="muted" style="margin-top:0" id="accountInfo"></p>
+  <div class="row">
+    <button class="primary" id="exportBtn">書き出す（JSON）</button>
+    <label class="icon-btn" style="display:inline-block">
+      読み込む <input type="file" id="importFile" accept="application/json" hidden>
+    </label>
+  </div>
+  <p class="muted">読み込んだデータは、今のデータに追加されます。</p>
+  <div class="dialog-foot">
+    <button class="icon-btn" id="logoutBtn">ログアウト</button>
+    <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
+  </div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
