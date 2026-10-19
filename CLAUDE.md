@@ -15,7 +15,7 @@
 - ビルドなしの素の HTML/CSS/JS。npm・Node・Python はこの PC に入っていない
 - `index.html` … 画面と CSS（ライト/ダーク対応、iPhone の safe-area 対応）
 - `app.js` … すべてのロジック
-  - 状態は `state = { tasks, routines, routineDone: {date: [routineId]}, notes: {date: body} }`
+  - 状態は `state = { tasks, routines, routineDone: {date: [routineId]}, notes: {date: body}, goals }`（goals は `parentId` でつながるツリー。タスクは `due`（締切）と `goalId` を持つ）
   - 変更は `commit(ops)` でローカルキャッシュ（localStorage）に保存 → 送信キューに積んで Supabase に送る（オフラインでも動く）
   - `pull()` で全件取り直し（起動時・画面復帰時・1 分ごと）
   - Supabase 未設定なら端末内保存だけのモードで動く
@@ -30,8 +30,8 @@
 - ローカルでも本番の Supabase につながる。テストでデータを作ったら必ず消す
 
 ## 機能の現状
-- 実装済み: 日付ごとのタスク（優先度・時間・カテゴリ）、未完了タスクの持ち越し表示、→明日、毎日の習慣（曜日指定）、達成率バー、日ごとのメモ、JSON の書き出し/読み込み、ログイン、パスワード再設定/変更、PWA
-- 今後の候補: iPhone への通知（Web Push。ホーム画面に追加した PWA のみ対象。Edge Function + pg_cron が必要）、習慣の連続記録、締切つきタスク、週の予定表
+- 実装済み: 長期目標のツリー（`goals` テーブル、何段でも分けられる・期限・進み具合・順調/遅れ気味・ステップを「→今日」でタスク化）、タスクの締切日時、日付ごとのタスク（優先度・時間・カテゴリ）、未完了タスクの持ち越し表示、→明日、毎日の習慣（曜日指定）、達成率バー、日ごとのメモ、JSON の書き出し/読み込み、ログイン、パスワード再設定/変更、PWA
+- 今後の候補: iPhone への通知（Web Push。ホーム画面に追加した PWA のみ対象。Edge Function + pg_cron が必要）、習慣の連続記録、週の予定表、数値で測る目標、習慣と目標のひもづけ
 
 ## ユーザーについて
 - プログラミング初心者。日本語で、専門用語を避けて、1 回に 1〜2 ステップずつ案内する

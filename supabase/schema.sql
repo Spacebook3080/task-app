@@ -39,6 +39,22 @@ create table if not exists public.notes (
   primary key (user_id, date)
 );
 
+-- 長期目標（parent_id で親の目標につながるツリー）
+create table if not exists public.goals (
+  id          text primary key,
+  user_id     uuid not null default auth.uid() references auth.users on delete cascade,
+  parent_id   text references public.goals on delete cascade,
+  title       text not null,
+  deadline    date,
+  done        boolean not null default false,
+  done_at     timestamptz,
+  created_at  timestamptz not null default now()
+);
+
+-- タスクの締切日時と、どの目標のステップかを入れる列
+alter table public.tasks add column if not exists due timestamptz;
+alter table public.tasks add column if not exists goal_id text references public.goals on delete set null;
+
 create index if not exists tasks_user_date on public.tasks (user_id, date);
 
 -- 本人のデータだけ読み書きできるようにする（Row Level Security）
@@ -46,6 +62,7 @@ alter table public.tasks        enable row level security;
 alter table public.routines     enable row level security;
 alter table public.routine_logs enable row level security;
 alter table public.notes        enable row level security;
+alter table public.goals        enable row level security;
 
 drop policy if exists "own tasks" on public.tasks;
 create policy "own tasks" on public.tasks
@@ -61,4 +78,8 @@ create policy "own routine_logs" on public.routine_logs
 
 drop policy if exists "own notes" on public.notes;
 create policy "own notes" on public.notes
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own goals" on public.goals;
+create policy "own goals" on public.goals
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

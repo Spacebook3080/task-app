@@ -103,6 +103,31 @@
   .pri.high { background: var(--high); } .pri.mid { background: var(--mid); } .pri.low { background: var(--low); }
   .tag { font-size: 11px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); flex: none; }
   .tag.overdue { background: transparent; color: var(--high); border: 1px solid var(--high); }
+  .tag.soon { background: transparent; color: var(--mid); border: 1px solid var(--mid); }
+  .tag.ok { background: transparent; color: var(--low); border: 1px solid var(--low); }
+  .tag.goal { background: var(--bg); color: var(--muted); }
+  .tag[data-due] { cursor: pointer; }
+  /* 狭い画面では、タグを名前の下の行に回す */
+  #taskList li { flex-wrap: wrap; row-gap: 4px; position: relative; padding-left: 14px; }
+  #taskList .pri { position: absolute; left: 0; top: 8px; bottom: 8px; }
+  #taskList .title { flex: 1 1 9em; }
+  #taskList .actions { margin-left: auto; }
+  .due-field { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .inline-picker { font-size: 14px; padding: 2px 6px; }
+
+  /* 目標 */
+  ul.goal-summary li { display: block; cursor: pointer; }
+  .goal-summary .goal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .goal-summary .title { font-weight: 600; cursor: pointer; }
+  .goal-summary .progress { height: 6px; margin-top: 6px; }
+  dialog.wide { width: min(680px, calc(100vw - 16px)); }
+  .goal-tree li { flex-wrap: wrap; gap: 6px 8px; }
+  .goal-tree .title { flex: 1 1 8em; }
+  .goal-tree .actions { margin-left: auto; align-items: center; }
+  .goal-tree .toggle { background: none; border: none; color: var(--muted); width: 20px; padding: 0; cursor: pointer; font-size: 13px; flex: none; }
+  .goal-tree .toggle:disabled { cursor: default; }
+  .add-step { display: flex; gap: 8px; flex: 1; }
+  .add-step input { flex: 1; min-width: 0; }
   .time { font-size: 12px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
   .actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; flex: none; }
   li:hover .actions, li:focus-within .actions { opacity: 1; }
@@ -174,6 +199,7 @@
   <header>
     <h1>📋 毎日のタスク<span class="sync" id="syncStatus"></span></h1>
     <div style="display:flex;gap:6px">
+      <button class="icon-btn" id="openGoals" title="長期の目標">🎯 目標</button>
       <button class="icon-btn" id="openRoutines" title="毎日の習慣を設定">🔁 習慣</button>
       <button class="icon-btn" id="openData" title="設定・バックアップ">⚙</button>
     </div>
@@ -205,6 +231,7 @@
       <input type="time" id="newTime" title="時間（任意）">
       <input type="text" id="newTag" placeholder="カテゴリ（任意）" list="tagList" style="flex:0 1 140px">
       <datalist id="tagList"></datalist>
+      <label class="due-field" title="締切（任意）">⏰ 締切 <input type="datetime-local" id="newDue"></label>
       <button class="primary" type="submit">追加</button>
     </form>
   </div>
@@ -226,6 +253,11 @@
     <ul class="list" id="taskList"></ul>
   </div>
 
+  <div class="card" id="goalCard" hidden>
+    <h2>🎯 目標</h2>
+    <ul class="list goal-summary" id="goalSummary"></ul>
+  </div>
+
   <div class="card">
     <h2>📝 メモ</h2>
     <textarea class="memo" id="memo" placeholder="この日のメモ・振り返り"></textarea>
@@ -241,6 +273,21 @@
   </form>
   <div class="days" id="routineDays"></div>
   <ul class="list" id="routineEditList" style="margin-top:12px"></ul>
+  <div class="dialog-foot">
+    <span></span>
+    <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
+  </div>
+</dialog>
+
+<dialog id="goalDialog" class="wide">
+  <h3>🎯 目標</h3>
+  <p class="muted" style="margin-top:0">大きな目標を「＋」で小さなステップに分けられます。ステップは「→今日」で今日のタスクに入れられます。</p>
+  <form class="row" id="goalForm">
+    <input type="text" id="goalTitle" placeholder="例：資格をとる、10kg やせる" required autocomplete="off">
+    <label class="due-field" title="期限（任意）">📅 期限 <input type="date" id="goalDeadline"></label>
+    <button class="primary" type="submit">追加</button>
+  </form>
+  <ul class="list goal-tree" id="goalTree"></ul>
   <div class="dialog-foot">
     <span></span>
     <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>

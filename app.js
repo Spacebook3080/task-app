@@ -4,6 +4,7 @@ const KEY_CACHE = 'dtm-cache-v2';          // 画面表示用のキャッシュ�
 const KEY_QUEUE = 'dtm-queue-v2';          // まだサーバーに送れていない変更
 const KEY_LEGACY = 'daily-task-manager-v1'; // 同期対応前のデータ
 const KEY_MIGRATED = 'dtm-legacy-migrated';
+const KEY_COLLAPSED = 'dtm-goal-collapsed'; // 目標ツリーで閉じている項目（この端末だけ）
 const WEEK = ['日','月','火','水','木','金','土'];
 const PRI_ORDER = { high: 0, mid: 1, low: 2 };
 
@@ -22,7 +23,7 @@ let mutations = 0; // pull 中に変更が入ったかを判定する
 const $ = id => document.getElementById(id);
 
 // ---------- 小物 ----------
-function emptyState() { return { tasks: [], routines: [], routineDone: {}, notes: {} }; }
+function emptyState() { return { tasks: [], routines: [], routineDone: {}, notes: {}, goals: [] }; }
 function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
@@ -36,12 +37,16 @@ function shift(s, n) { const d = parse(s); d.setDate(d.getDate() + n); return fm
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function iso(ms) { return ms ? new Date(ms).toISOString() : null; }
 function userId() { return session ? session.user.id : null; }
+function hm(d) { return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+// 締切は画面では「2026-10-25T18:00」（この端末の時刻）の形で持つ
+function localDT(s) { const d = new Date(s); return fmt(d) + 'T' + hm(d); }
 
 // ---------- サーバーとの変換 ----------
 function taskRow(t) {
   return {
     id: t.id, user_id: userId(), title: t.title, date: t.date,
     time: t.time || null, priority: t.priority, tag: t.tag || null,
+    due: t.due ? new Date(t.due).toISOString() : null, goal_id: t.goalId || null,
     done: t.done, done_at: iso(t.doneAt), created_at: iso(t.createdAt),
     updated_at: new Date().toISOString()
   };
@@ -49,11 +54,24 @@ function taskRow(t) {
 function rowToTask(r) {
   return {
     id: r.id, title: r.title, date: r.date, time: r.time || '', priority: r.priority,
-    tag: r.tag || '', done: r.done, doneAt: r.done_at ? Date.parse(r.done_at) : null,
+    tag: r.tag || '', due: r.due ? localDT(r.due) : '', goalId: r.goal_id || null,
+    done: r.done, doneAt: r.done_at ? Date.parse(r.done_at) : null,
     createdAt: Date.parse(r.created_at)
   };
 }
 function routineRow(r) { return { id: r.id, user_id: userId(), title: r.title, days: r.days }; }
+function goalRow(g) {
+  return {
+    id: g.id, user_id: userId(), parent_id: g.parentId || null, title: g.title,
+    deadline: g.deadline || null, done: g.done, done_at: iso(g.doneAt), created_at: iso(g.createdAt)
+  };
+}
+function rowToGoal(r) {
+  return {
+    id: r.id, parentId: r.parent_id || null, title: r.title, deadline: r.deadline || '',
+    done: r.done, doneAt: r.done_at ? Date.parse(r.done_at) : null, createdAt: Date.parse(r.created_at)
+  };
+}
 
 // ---------- 保存と同期 ----------
 function saveCache() { lsSet(KEY_CACHE, { user: userId(), state }); }
@@ -124,11 +142,13 @@ async function pull() {
     if (queue.length) return; // 送れていない変更がある間は上書きしない
     setSync('syncing');
     const before = mutations;
-    const [tasks, routines, logs, notes] = await Promise.all([
+    const [tasks, routines, logs, notes, goals] = await Promise.all([
       fetchAll('tasks', '*', 'id'),
       fetchAll('routines', 'id,title,days,created_at', 'created_at'),
       fetchAll('routine_logs', 'routine_id,date', 'date'),
-      fetchAll('notes', 'date,body', 'date')
+      fetchAll('notes', 'date,body', 'date'),
+      // 目標のテーブルがまだ無くても、ほかのデータは読めるようにする
+      fetchAll('goals', '*', 'created_at').catch(e => { console.warn(e); return null; })
     ]);
     if (mutations !== before) { setTimeout(pull, 1000); return; } // 取得中に変更されたら取り直す
     const next = emptyState();
@@ -136,6 +156,7 @@ async function pull() {
     next.routines = routines.map(r => ({ id: r.id, title: r.title, days: r.days }));
     logs.forEach(l => (next.routineDone[l.date] = next.routineDone[l.date] || []).push(l.routine_id));
     notes.forEach(n => { next.notes[n.date] = n.body; });
+    next.goals = goals ? goals.map(rowToGoal) : state.goals;
     state = next;
     saveCache();
     render();
@@ -151,6 +172,19 @@ async function pull() {
 // 別のデータ（バックアップや同期対応前のデータ）を今のデータに追加する
 function mergeData(data) {
   const ops = [];
+  // 目標は親から順に送る（親が先にないとサーバーに入らないため）
+  const goals = (data.goals || []).filter(g => g && g.id && g.title);
+  const depth = g => { let n = 0, p = g; while (p && p.parentId && n < 50) { p = goals.find(x => x.id === p.parentId); n++; } return n; };
+  goals.slice().sort((a, b) => depth(a) - depth(b)).forEach(g => {
+    const item = {
+      id: g.id, parentId: g.parentId || null, title: g.title, deadline: g.deadline || '',
+      done: !!g.done, doneAt: g.doneAt || null, createdAt: g.createdAt || Date.now()
+    };
+    const i = state.goals.findIndex(x => x.id === g.id);
+    if (i >= 0) state.goals[i] = item; else state.goals.push(item);
+    ops.push({ t: 'upsert', table: 'goals', row: goalRow(item) });
+  });
+
   const routines = (data.routines || []).filter(r => r && r.id && r.title);
   routines.forEach(r => {
     const i = state.routines.findIndex(x => x.id === r.id);
@@ -163,7 +197,9 @@ function mergeData(data) {
   tasks.forEach(t => {
     const item = {
       id: t.id, title: t.title, date: t.date, time: t.time || '', priority: t.priority || 'mid',
-      tag: t.tag || '', done: !!t.done, doneAt: t.doneAt || null, createdAt: t.createdAt || Date.now()
+      tag: t.tag || '', due: t.due || '',
+      goalId: state.goals.some(g => g.id === t.goalId) ? t.goalId : null,
+      done: !!t.done, doneAt: t.doneAt || null, createdAt: t.createdAt || Date.now()
     };
     const i = state.tasks.findIndex(x => x.id === t.id);
     if (i >= 0) state.tasks[i] = item; else state.tasks.push(item);
@@ -212,6 +248,51 @@ function sortTasks(list) {
     (a.createdAt - b.createdAt));
 }
 
+// ---------- 目標（ツリー）のデータ ----------
+function childrenOf(id) {
+  return state.goals.filter(g => (g.parentId || null) === id).sort((a, b) => a.createdAt - b.createdAt);
+}
+function descendants(id) { return childrenOf(id).flatMap(c => [c, ...descendants(c.id)]); }
+function rootOf(g) {
+  for (let n = 0; g && g.parentId && n < 50; n++) {
+    const p = state.goals.find(x => x.id === g.parentId);
+    if (!p) break;
+    g = p;
+  }
+  return g;
+}
+// 進み具合：いちばん下のステップのうち、終わった数（親が完了なら下も全部完了扱い）
+function leafCount(g, parentDone) {
+  const kids = childrenOf(g.id), d = parentDone || g.done;
+  if (!kids.length) return { done: d ? 1 : 0, total: 1 };
+  return kids.reduce((s, k) => {
+    const c = leafCount(k, d);
+    return { done: s.done + c.done, total: s.total + c.total };
+  }, { done: 0, total: 0 });
+}
+// 期限までの経過時間から見て、進み具合が足りているか
+function paceOf(g, p) {
+  if (!g.deadline || g.done || p.total < 2) return '';
+  const start = g.createdAt, end = parse(g.deadline).getTime() + 86400000;
+  const expected = Math.min(1, Math.max(0, (Date.now() - start) / (end - start)));
+  return p.done / p.total + 0.1 < expected ? 'late' : 'ok';
+}
+function deadlineTag(g) {
+  if (!g.deadline) return '';
+  const d = parse(g.deadline);
+  const n = Math.round((d - parse(todayStr())) / 86400000);
+  const label = g.done ? `${d.getMonth() + 1}/${d.getDate()}まで`
+    : n < 0 ? `期限 ${-n}日すぎ` : n === 0 ? '今日まで' : `あと${n}日`;
+  const cls = g.done ? '' : n < 0 ? 'overdue' : n <= 3 ? 'soon' : '';
+  return `<span class="tag ${cls}" title="期限 ${d.getMonth() + 1}/${d.getDate()}">${label}</span>`;
+}
+function dueTag(t) {
+  if (!t.due) return '';
+  const d = new Date(t.due), diff = d - Date.now();
+  const cls = t.done ? '' : diff < 0 ? 'overdue' : diff < 86400000 ? 'soon' : '';
+  return `<span class="tag ${cls}" data-due="${t.id}" title="締切を変える">⏰ ${d.getMonth() + 1}/${d.getDate()} ${hm(d)}${!t.done && diff < 0 ? ' すぎ' : ''}</span>`;
+}
+
 // ---------- 描画 ----------
 function render() {
   const d = parse(current);
@@ -239,14 +320,18 @@ function render() {
   $('taskList').innerHTML = shown.length ? shown.map(t => {
     const overdue = t.date < current && !t.done;
     const od = parse(t.date);
+    const goal = rootOf(t.goalId && state.goals.find(g => g.id === t.goalId));
     return `<li class="${t.done ? 'done' : ''}">
       <span class="pri ${t.priority}"></span>
       <input type="checkbox" data-task="${t.id}" ${t.done ? 'checked' : ''}>
       ${t.time ? `<span class="time">${t.time}</span>` : ''}
       <span class="title" data-edit="${t.id}" title="ダブルクリックで編集">${esc(t.title)}</span>
       ${overdue ? `<span class="tag overdue">持ち越し ${od.getMonth() + 1}/${od.getDate()}</span>` : ''}
+      ${dueTag(t)}
+      ${goal ? `<span class="tag goal">🎯 ${esc(goal.title)}</span>` : ''}
       ${t.tag ? `<span class="tag">${esc(t.tag)}</span>` : ''}
       <span class="actions">
+        ${t.due ? '' : `<button data-due="${t.id}" title="締切を決める">⏰</button>`}
         <button data-tomorrow="${t.id}" title="翌日に回す">→明日</button>
         <button data-del="${t.id}" title="削除">✕</button>
       </span></li>`;
@@ -260,6 +345,22 @@ function render() {
   const pct = total ? Math.round(done / total * 100) : 0;
   $('percent').textContent = total && pct === 100 ? '🎉 100%' : pct + '%';
   $('bar').style.width = pct + '%';
+
+  // 目標（まだ終わっていない、いちばん上の目標だけ）
+  const tops = childrenOf(null).filter(g => !g.done);
+  $('goalCard').hidden = !tops.length;
+  $('goalSummary').innerHTML = tops.map(g => {
+    const p = leafCount(g), pct = Math.round(p.done / p.total * 100), pace = paceOf(g, p);
+    return `<li data-gopen="${g.id}">
+      <div class="goal-head">
+        <span class="title">${esc(g.title)}</span>
+        ${deadlineTag(g)}
+        ${pace ? `<span class="tag ${pace === 'late' ? 'soon' : 'ok'}">${pace === 'late' ? '遅れ気味' : '順調'}</span>` : ''}
+        <span class="time">${pct}%</span>
+      </div>
+      <div class="progress"><div style="width:${pct}%"></div></div></li>`;
+  }).join('');
+  if ($('goalDialog').open) renderGoalTree();
 
   // メモ
   if (document.activeElement !== $('memo')) $('memo').value = state.notes[current] || '';
@@ -277,11 +378,13 @@ $('addForm').addEventListener('submit', e => {
   const t = {
     id: uid(), title, date: current,
     priority: $('newPri').value, time: $('newTime').value, tag: $('newTag').value.trim(),
+    due: $('newDue').value, goalId: null,
     done: false, doneAt: null, createdAt: Date.now()
   };
   state.tasks.push(t);
   $('newTitle').value = '';
   $('newTime').value = '';
+  $('newDue').value = '';
   commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
   $('newTitle').focus();
 });
@@ -306,11 +409,25 @@ taskList.addEventListener('change', e => {
   if (!t) return;
   t.done = e.target.checked;
   t.doneAt = t.done ? Date.now() : null;
-  commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
+  const ops = [{ t: 'upsert', table: 'tasks', row: taskRow(t) }];
+  // 目標のステップから作ったタスクなら、ステップも一緒に完了にする
+  const g = t.goalId && state.goals.find(x => x.id === t.goalId);
+  if (g) {
+    g.done = t.done; g.doneAt = t.doneAt;
+    ops.push({ t: 'upsert', table: 'goals', row: goalRow(g) });
+  }
+  commit(ops);
 });
 taskList.addEventListener('click', e => {
-  const del = e.target.dataset.del, tom = e.target.dataset.tomorrow;
-  if (del) {
+  const del = e.target.dataset.del, tom = e.target.dataset.tomorrow, due = e.target.dataset.due;
+  if (due) {
+    const t = state.tasks.find(x => x.id === due);
+    inlinePicker(e.target, 'datetime-local', t.due, v => {
+      if (v === t.due) return render();
+      t.due = v;
+      commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
+    });
+  } else if (del) {
     state.tasks = state.tasks.filter(t => t.id !== del);
     commit([{ t: 'delete', table: 'tasks', match: { id: del } }]);
   } else if (tom) {
@@ -323,25 +440,48 @@ taskList.addEventListener('dblclick', e => {
   const id = e.target.dataset.edit;
   if (!id) return;
   const t = state.tasks.find(x => x.id === id);
+  editTitle(e.target, t.title, v => {
+    t.title = v;
+    commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
+  });
+});
+
+// 名前をその場で書きかえる
+function editTitle(el, value, onSave) {
   const input = document.createElement('input');
-  input.type = 'text'; input.value = t.title; input.className = 'edit-input';
-  e.target.replaceWith(input);
+  input.type = 'text'; input.value = value; input.className = 'edit-input';
+  el.replaceWith(input);
   input.focus(); input.select();
   let finished = false;
   const finish = ok => {
     if (finished) return; finished = true;
     const v = input.value.trim();
-    if (ok && v && v !== t.title) {
-      t.title = v;
-      commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
-    } else render();
+    if (ok && v && v !== value) onSave(v); else render();
   };
   input.addEventListener('keydown', ev => {
     if (ev.key === 'Enter') finish(true);
     if (ev.key === 'Escape') finish(false);
   });
   input.addEventListener('blur', () => finish(true));
-});
+}
+
+// 日付（または日時）の入力欄をその場に出して、決まったら保存する。空にすると取り消し
+function inlinePicker(el, type, value, onSave) {
+  const input = document.createElement('input');
+  input.type = type; input.value = value || ''; input.className = 'inline-picker';
+  el.replaceWith(input);
+  input.focus();
+  try { input.showPicker(); } catch (e) {}
+  let finished = false;
+  const finish = () => { if (finished) return; finished = true; onSave(input.value); };
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') finish();
+    if (ev.key === 'Escape') { finished = true; render(); }
+  });
+  input.addEventListener('blur', finish);
+  // 日付だけなら選んだ時点で決まり。日時は時刻まで入れ終わってから（Enter か欄の外を押す）
+  if (type === 'date') input.addEventListener('change', finish);
+}
 
 $('filters').addEventListener('click', e => {
   if (!e.target.dataset.f) return;
@@ -410,6 +550,135 @@ $('routineEditList').addEventListener('click', e => {
   commit([{ t: 'delete', table: 'routines', match: { id } }]); // 記録はサーバー側で一緒に消える
   renderRoutineEdit();
 });
+
+// ---------- 目標の設定（ツリー） ----------
+let collapsed = new Set(lsGet(KEY_COLLAPSED) || []);
+let addingUnder = null; // 下にステップを追加している目標
+
+function goalItems(g, depth) {
+  const kids = childrenOf(g.id);
+  const open = !collapsed.has(g.id);
+  const p = leafCount(g);
+  const inToday = state.tasks.some(t => t.goalId === g.id && !t.done);
+  const pad = depth * 20 + 4;
+  let html = `<li class="${g.done ? 'done' : ''}" style="padding-left:${pad}px">
+    <button class="toggle" data-gtoggle="${g.id}" ${kids.length ? '' : 'disabled'} aria-label="開く・閉じる">${kids.length ? (open ? '▾' : '▸') : ''}</button>
+    <input type="checkbox" data-goal="${g.id}" ${g.done ? 'checked' : ''}>
+    <span class="title" data-gedit="${g.id}" title="ダブルクリックで編集">${esc(g.title)}</span>
+    ${kids.length ? `<span class="time">${Math.round(p.done / p.total * 100)}%</span>` : ''}
+    ${deadlineTag(g)}
+    <span class="actions">
+      <button data-gadd="${g.id}" title="下にステップを追加">＋</button>
+      <button data-gdate="${g.id}" title="期限を決める">📅</button>
+      ${kids.length || g.done ? '' : inToday ? '<span class="muted">今日に追加済み</span>'
+        : `<button data-gtoday="${g.id}" title="今日のタスクに入れる">→今日</button>`}
+      <button data-gdel="${g.id}" title="削除">✕</button>
+    </span></li>`;
+  if (open) html += kids.map(k => goalItems(k, depth + 1)).join('');
+  if (addingUnder === g.id) {
+    html += `<li style="padding-left:${pad + 20}px"><form class="add-step" data-gform="${g.id}">
+      <input type="text" placeholder="ステップを入力して Enter" autocomplete="off" enterkeyhint="done" required>
+      <button class="primary" type="submit">追加</button></form></li>`;
+  }
+  return html;
+}
+function renderGoalTree() {
+  const tops = childrenOf(null);
+  $('goalTree').innerHTML = tops.length ? tops.map(g => goalItems(g, 0)).join('')
+    : '<li class="empty">まだ目標がありません</li>';
+  const f = $('goalTree').querySelector('form input');
+  if (f && document.activeElement !== f) f.focus();
+}
+function openGoals() { renderGoalTree(); if (!$('goalDialog').open) $('goalDialog').showModal(); }
+function saveCollapsed() { lsSet(KEY_COLLAPSED, [...collapsed]); }
+function newGoal(title, parentId, deadline) {
+  const g = { id: uid(), parentId, title, deadline: deadline || '', done: false, doneAt: null, createdAt: Date.now() };
+  state.goals.push(g);
+  commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
+}
+
+$('openGoals').onclick = openGoals;
+$('goalSummary').addEventListener('click', openGoals);
+$('goalForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const title = $('goalTitle').value.trim();
+  if (!title) return;
+  newGoal(title, null, $('goalDeadline').value);
+  $('goalTitle').value = '';
+  $('goalDeadline').value = '';
+});
+
+const goalTree = $('goalTree');
+goalTree.addEventListener('submit', e => {
+  e.preventDefault();
+  const input = e.target.querySelector('input');
+  const title = input.value.trim();
+  if (!title) return;
+  newGoal(title, e.target.dataset.gform, '');
+  // 続けて入力できるように、追加欄は開いたままにする
+});
+goalTree.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && e.target.closest('form[data-gform]')) {
+    e.preventDefault(); // ダイアログごと閉じないように
+    addingUnder = null;
+    renderGoalTree();
+  }
+});
+goalTree.addEventListener('change', e => {
+  const g = state.goals.find(x => x.id === e.target.dataset.goal);
+  if (!g) return;
+  g.done = e.target.checked;
+  g.doneAt = g.done ? Date.now() : null;
+  commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
+});
+goalTree.addEventListener('click', e => {
+  const d = e.target.dataset;
+  if (d.gtoggle) {
+    if (collapsed.has(d.gtoggle)) collapsed.delete(d.gtoggle); else collapsed.add(d.gtoggle);
+    saveCollapsed();
+    renderGoalTree();
+  } else if (d.gadd) {
+    addingUnder = addingUnder === d.gadd ? null : d.gadd;
+    collapsed.delete(d.gadd);
+    saveCollapsed();
+    renderGoalTree();
+  } else if (d.gdate) {
+    const g = state.goals.find(x => x.id === d.gdate);
+    inlinePicker(e.target, 'date', g.deadline, v => {
+      if (v === g.deadline) return render();
+      g.deadline = v;
+      commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
+    });
+  } else if (d.gtoday) {
+    const g = state.goals.find(x => x.id === d.gtoday);
+    const t = {
+      id: uid(), title: g.title, date: todayStr(), priority: 'mid', time: '', tag: '',
+      due: '', goalId: g.id, done: false, doneAt: null, createdAt: Date.now()
+    };
+    state.tasks.push(t);
+    commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
+  } else if (d.gdel) {
+    const g = state.goals.find(x => x.id === d.gdel);
+    const ids = [g.id, ...descendants(g.id).map(x => x.id)];
+    const msg = ids.length > 1
+      ? `「${g.title}」と、その下のステップ${ids.length - 1}個を削除しますか？`
+      : `「${g.title}」を削除しますか？`;
+    if (!confirm(msg)) return;
+    state.goals = state.goals.filter(x => !ids.includes(x.id));
+    state.tasks.forEach(t => { if (ids.includes(t.goalId)) t.goalId = null; });
+    if (ids.includes(addingUnder)) addingUnder = null;
+    commit([{ t: 'delete', table: 'goals', match: { id: g.id } }]); // 下のステップはサーバー側で一緒に消える
+  }
+});
+goalTree.addEventListener('dblclick', e => {
+  const g = state.goals.find(x => x.id === e.target.dataset.gedit);
+  if (!g) return;
+  editTitle(e.target, g.title, v => {
+    g.title = v;
+    commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
+  });
+});
+$('goalDialog').addEventListener('close', () => { addingUnder = null; });
 
 // ---------- 設定・バックアップ ----------
 $('openData').onclick = () => {
@@ -533,7 +802,7 @@ function showAuth() { $('app').hidden = true; $('auth').hidden = false; setAuthM
 
 async function enterApp() {
   const cache = lsGet(KEY_CACHE);
-  state = cache && cache.user === userId() ? cache.state : emptyState();
+  state = Object.assign(emptyState(), cache && cache.user === userId() ? cache.state : {});
   queue = lsGet(KEY_QUEUE) || [];
   showApp();
   await pull();
