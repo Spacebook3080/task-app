@@ -1,1 +1,3 @@
-.claude/
+.claude/*
+!.claude/launch.json
+!.claude/serve.ps1
