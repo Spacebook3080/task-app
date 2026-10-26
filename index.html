@@ -106,6 +106,8 @@
   .tag.soon { background: transparent; color: var(--mid); border: 1px solid var(--mid); }
   .tag.ok { background: transparent; color: var(--low); border: 1px solid var(--low); }
   .tag.goal { background: var(--bg); color: var(--muted); }
+  .tag.lv0 { background: var(--accent); color: #fff; }
+  .tag.lv1 { background: var(--accent-soft); color: var(--accent); }
   .tag[data-due] { cursor: pointer; }
   /* 狭い画面では、タグを名前の下の行に回す */
   #taskList li { flex-wrap: wrap; row-gap: 4px; position: relative; padding-left: 14px; }
@@ -149,6 +151,17 @@
   .edit-input { flex: 1; }
 
   textarea.memo { width: 100%; min-height: 80px; resize: vertical; }
+
+  /* 週の振り返り */
+  .review-stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; margin-bottom: 8px; }
+  .review-stats b { font-size: 18px; }
+  .review-goals li { font-size: 14px; }
+  .review-goals .up { color: var(--low); font-weight: 600; flex: none; }
+  .review-last { font-size: 13px; background: var(--bg); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; margin: 8px 0; }
+  .review-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .review-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .review-form textarea { width: 100%; resize: vertical; color: var(--text); }
+  .review-form .row { margin-bottom: 0; }
 
   dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text); padding: 20px; width: min(520px, calc(100vw - 32px)); }
   dialog::backdrop { background: rgba(0,0,0,.35); }
@@ -269,6 +282,23 @@
     <ul class="list goal-summary" id="goalSummary"></ul>
   </div>
 
+  <div class="card" id="reviewCard" hidden>
+    <h2>🗓 今週の振り返り <span class="muted" id="reviewRange"></span></h2>
+    <div class="review-stats" id="reviewStats"></div>
+    <ul class="list review-goals" id="reviewGoals"></ul>
+    <p class="review-last" id="reviewLast" hidden></p>
+    <form id="reviewForm" class="review-form">
+      <label>よかったこと<textarea id="reviewGood" rows="2"></textarea></label>
+      <label>うまくいかなかったこと<textarea id="reviewBad" rows="2"></textarea></label>
+      <label>来週やること<textarea id="reviewNext" rows="2"></textarea></label>
+      <div class="row">
+        <button class="primary" type="submit">保存</button>
+        <button class="icon-btn" type="button" id="reviewAi" title="今週の記録を付けて、Claude への相談文をコピー">🤖 Claude に相談</button>
+        <span class="muted" id="reviewMsg"></span>
+      </div>
+    </form>
+  </div>
+
   <div class="card">
     <h2>📝 メモ</h2>
     <textarea class="memo" id="memo" placeholder="この日のメモ・振り返り"></textarea>
@@ -291,10 +321,10 @@
 </dialog>
 
 <dialog id="goalDialog" class="wide">
-  <h3>🎯 目標</h3>
-  <p class="muted" style="margin-top:0">大きな目標を「＋」で小さなステップに分けられます。ステップは「→今日」で今日のタスクに入れられます。</p>
+  <h3>🎯 ビジョンと目標</h3>
+  <p class="muted" style="margin-top:0">いちばん上に「こうなりたい」というビジョンを書き、「＋」で期限つきの目標 → ステップへと分けます。ステップは「→今日」で今日のタスクに入れられます。🤖 で Claude に分け方を相談、↪ で別の場所へ移せます。</p>
   <form class="row" id="goalForm">
-    <input type="text" id="goalTitle" placeholder="例：資格をとる、10kg やせる" required autocomplete="off">
+    <input type="text" id="goalTitle" placeholder="ビジョン（例：英語で仕事ができる人になる）" required autocomplete="off">
     <label class="due-field" title="期限（任意）">📅 期限 <input type="date" id="goalDeadline"></label>
     <button class="primary" type="submit">追加</button>
   </form>
@@ -315,6 +345,11 @@
     </label>
   </div>
   <p class="muted">読み込んだデータは、今のデータに追加されます。</p>
+  <h3 style="margin-top:20px">🗓 週の振り返り</h3>
+  <div class="row">
+    <label class="due-field">振り返る曜日 <select id="reviewDay"></select></label>
+  </div>
+  <p class="muted">この曜日の画面に「今週の振り返り」が出ます（この端末での設定）。</p>
   <div id="notifyBox">
     <h3 style="margin-top:20px">🔔 毎朝の通知</h3>
     <div class="row">

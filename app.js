@@ -5,6 +5,7 @@ const KEY_QUEUE = 'dtm-queue-v2';          // まだサーバーに送れてい�
 const KEY_LEGACY = 'daily-task-manager-v1'; // 同期対応前のデータ
 const KEY_MIGRATED = 'dtm-legacy-migrated';
 const KEY_COLLAPSED = 'dtm-goal-collapsed'; // 目標ツリーで閉じている項目（この端末だけ）
+const KEY_REVIEW_DAY = 'dtm-review-day';    // 週の振り返りをする曜日（この端末だけ）
 const WEEK = ['日','月','火','水','木','金','土'];
 const PRI_ORDER = { high: 0, mid: 1, low: 2 };
 
@@ -264,18 +265,20 @@ function rootOf(g) {
 // 進み具合：いちばん下のステップのうち、終わった数（親が完了なら下も全部完了扱い）
 // recent はこの 7 日で終わった数、last は最後に終わった日時
 const RECENT_DAYS = 7;
-function leafCount(g, parentAt) {
+// いちばん下のステップそれぞれの、終わった日時（終わっていなければ undefined）
+function leafTimes(g, parentAt) {
   const kids = childrenOf(g.id);
-  const at = g.done ? (g.doneAt || 0) : parentAt; // 終わった日時（終わっていなければ undefined）
-  if (!kids.length) {
-    const d = at !== undefined;
-    return { done: d ? 1 : 0, total: 1, recent: d && at >= Date.now() - RECENT_DAYS * 86400000 ? 1 : 0, last: d ? at : 0 };
-  }
-  return kids.reduce((s, k) => {
-    const c = leafCount(k, at);
-    return { done: s.done + c.done, total: s.total + c.total, recent: s.recent + c.recent, last: Math.max(s.last, c.last) };
-  }, { done: 0, total: 0, recent: 0, last: 0 });
+  const at = g.done ? (g.doneAt || 0) : parentAt;
+  return kids.length ? kids.flatMap(k => leafTimes(k, at)) : [at];
 }
+function leafCount(g) {
+  const times = leafTimes(g), since = Date.now() - RECENT_DAYS * 86400000;
+  const done = times.filter(t => t !== undefined);
+  return { done: done.length, total: times.length, recent: done.filter(t => t >= since).length, last: Math.max(0, ...done) };
+}
+// 段階の名前：いちばん上がビジョン、その下が目標、さらに下はステップ
+const LEVELS = ['ビジョン', '目標', 'ステップ'];
+function levelName(depth) { return LEVELS[Math.min(depth, LEVELS.length - 1)]; }
 // 次にやるステップ：上から順に見て、最初のまだ終わっていない、いちばん下のステップ
 function nextStep(g) {
   for (const k of childrenOf(g.id)) {
@@ -399,6 +402,8 @@ function render() {
   }).join('');
   if ($('goalDialog').open) renderGoalTree();
 
+  renderReview();
+
   // メモ
   if (document.activeElement !== $('memo')) $('memo').value = state.notes[current] || '';
 
@@ -406,6 +411,133 @@ function render() {
   const tags = [...new Set(state.tasks.map(t => t.tag).filter(Boolean))];
   $('tagList').innerHTML = tags.map(t => `<option value="${esc(t)}">`).join('');
 }
+
+// ---------- 週の振り返り ----------
+// 振り返りは、その日のメモの中に下の形で保存する（メモ欄から読んでも分かるように）
+const REVIEW_START = '【週の振り返り】', REVIEW_END = '【振り返りここまで】';
+const REVIEW_FIELDS = [['good', 'よかったこと'], ['bad', 'うまくいかなかったこと'], ['next', '来週やること']];
+let reviewDirty = null; // 入力中で、まだ保存していない日付
+
+function reviewDay() { const v = lsGet(KEY_REVIEW_DAY); return v === null ? 0 : v; }
+function readReview(date) {
+  const body = state.notes[date] || '';
+  const i = body.indexOf(REVIEW_START), j = body.indexOf(REVIEW_END);
+  const out = { good: '', bad: '', next: '' };
+  if (i < 0 || j < i) return out;
+  const block = body.slice(i + REVIEW_START.length, j);
+  REVIEW_FIELDS.forEach(([k, label], n) => {
+    const a = block.indexOf(`■${label}\n`);
+    if (a < 0) return;
+    const rest = block.slice(a + label.length + 2);
+    const nextLabel = REVIEW_FIELDS.slice(n + 1).map(f => rest.indexOf(`■${f[1]}\n`)).find(x => x >= 0);
+    out[k] = rest.slice(0, nextLabel === undefined ? rest.length : nextLabel).trim();
+  });
+  return out;
+}
+function writeReview(date, r) {
+  let body = state.notes[date] || '';
+  const i = body.indexOf(REVIEW_START), j = body.indexOf(REVIEW_END);
+  if (i >= 0 && j > i) body = (body.slice(0, i) + body.slice(j + REVIEW_END.length)).trim();
+  if (REVIEW_FIELDS.some(([k]) => r[k])) {
+    const block = [REVIEW_START, ...REVIEW_FIELDS.flatMap(([k, label]) => [`■${label}`, r[k]]), REVIEW_END].join('\n');
+    body = body ? body + '\n\n' + block : block;
+  }
+  if (body) state.notes[date] = body; else delete state.notes[date];
+  commit([body
+    ? { t: 'upsert', table: 'notes', row: { user_id: userId(), date, body, updated_at: new Date().toISOString() } }
+    : { t: 'delete', table: 'notes', match: { date } }]);
+}
+
+// 今日を含む 7 日間の記録をまとめる
+function weekSummary(end) {
+  const start = shift(end, -6);
+  const from = parse(start).getTime(), to = parse(end).getTime() + 86400000;
+  const inWeek = t => t !== undefined && t !== null && t >= from && t < to;
+  const tasks = state.tasks.filter(t => t.done && inWeek(t.doneAt));
+  let rTotal = 0, rDone = 0;
+  for (let d = start; d <= end; d = shift(d, 1)) {
+    const rs = routinesFor(d), done = state.routineDone[d] || [];
+    rTotal += rs.length;
+    rDone += rs.filter(r => done.includes(r.id)).length;
+  }
+  const goals = childrenOf(null).filter(g => !g.done).map(g => {
+    const steps = descendants(g.id).filter(s => s.done && inWeek(s.doneAt) && !childrenOf(s.id).length);
+    return { g, gained: leafTimes(g).filter(inWeek).length, steps, next: nextStep(g), p: leafCount(g) };
+  });
+  return { start, end, tasks, rTotal, rDone, goals };
+}
+
+function renderReview() {
+  const show = parse(current).getDay() === reviewDay();
+  $('reviewCard').hidden = !show;
+  if (!show) return;
+  const w = weekSummary(current), s = parse(w.start), e = parse(w.end);
+  $('reviewRange').textContent = `${s.getMonth() + 1}/${s.getDate()}〜${e.getMonth() + 1}/${e.getDate()}`;
+  $('reviewStats').innerHTML = `
+    <span>終えたタスク <b>${w.tasks.length}</b> 件</span>
+    ${w.rTotal ? `<span>習慣 <b>${Math.round(w.rDone / w.rTotal * 100)}</b>%（${w.rDone}/${w.rTotal}）</span>` : ''}
+    <span>進んだステップ <b>${w.goals.reduce((n, x) => n + x.gained, 0)}</b></span>`;
+  $('reviewGoals').innerHTML = w.goals.map(x => `<li>
+      <span class="title">${esc(x.g.title)}</span>
+      ${x.gained ? `<span class="up">+${x.gained}ステップ</span>` : '<span class="tag soon">進みなし</span>'}
+      <span class="time">${Math.round(x.p.done / x.p.total * 100)}%</span></li>`).join('');
+  const last = readReview(shift(current, -7)).next;
+  $('reviewLast').hidden = !last;
+  $('reviewLast').textContent = last ? `先週決めた「来週やること」\n${last}` : '';
+  // 入力中のものは、画面を描き直しても消さない
+  if (reviewDirty !== current) {
+    const r = readReview(current);
+    $('reviewGood').value = r.good; $('reviewBad').value = r.bad; $('reviewNext').value = r.next;
+    reviewDirty = null;
+  }
+}
+function reviewInput() {
+  return { good: $('reviewGood').value.trim(), bad: $('reviewBad').value.trim(), next: $('reviewNext').value.trim() };
+}
+function reviewPrompt() {
+  const w = weekSummary(current), r = reviewInput(), last = readReview(shift(current, -7)).next;
+  const lines = [
+    `今週（${w.start}〜${w.end}）の振り返りを手伝ってください。`,
+    '',
+    `終えたタスク：${w.tasks.length} 件${w.tasks.length ? '（' + w.tasks.slice(0, 20).map(t => t.title).join('、') + '）' : ''}`,
+    w.rTotal ? `習慣：${w.rDone}/${w.rTotal} 回できた` : '習慣：登録なし',
+    '',
+    'ビジョン・目標ごとの進み具合：',
+    ...w.goals.flatMap(x => [
+      `- ${x.g.title}：全体 ${x.p.done}/${x.p.total} ステップ、今週 +${x.gained}${x.g.deadline ? `、期限 ${x.g.deadline}` : ''}`,
+      ...x.steps.map(s => `  - 今週終えた：${s.title}`),
+      ...(x.next ? [`  - 次のステップ：${x.next.title}`] : []),
+    ]),
+  ];
+  if (last) lines.push('', `先週決めた「来週やること」：\n${last}`);
+  if (REVIEW_FIELDS.some(([k]) => r[k])) {
+    lines.push('', '私の振り返り：', ...REVIEW_FIELDS.filter(([k]) => r[k]).map(([k, label]) => `- ${label}：${r[k]}`));
+  }
+  lines.push('',
+    'お願い：',
+    '- 今週の良かった点と、止まっている目標があればその理由を一緒に考えてください（わからないことは質問してください）',
+    '- 来週やることを 3 つくらいに絞って提案してください',
+    '- ステップの分け方を直したほうがよければ、どの目標の下に何を足すかを「- 」の箇条書きで出してください');
+  return lines.join('\n');
+}
+['reviewGood', 'reviewBad', 'reviewNext'].forEach(id => $(id).addEventListener('input', () => {
+  reviewDirty = current;
+  $('reviewMsg').textContent = '';
+}));
+$('reviewForm').addEventListener('submit', e => {
+  e.preventDefault();
+  reviewDirty = null;
+  writeReview(current, reviewInput());
+  $('reviewMsg').textContent = '保存しました（その日のメモにも入ります）';
+});
+$('reviewAi').onclick = () => {
+  copyText(reviewPrompt()).then(ok => {
+    $('reviewMsg').textContent = ok ? '相談文をコピーしました。Claude アプリに貼ってください' : 'コピーできませんでした';
+  });
+};
+$('reviewDay').innerHTML = WEEK.map((w, i) => `<option value="${i}">${w}曜日</option>`).join('');
+$('reviewDay').value = reviewDay();
+$('reviewDay').addEventListener('change', e => { lsSet(KEY_REVIEW_DAY, Number(e.target.value)); render(); });
 
 // ---------- タスクの操作 ----------
 $('addForm').addEventListener('submit', e => {
@@ -602,13 +734,15 @@ function goalItems(g, depth) {
   let html = `<li class="${g.done ? 'done' : ''}" style="padding-left:${pad}px">
     <button class="toggle" data-gtoggle="${g.id}" ${kids.length ? '' : 'disabled'} aria-label="開く・閉じる">${kids.length ? (open ? '▾' : '▸') : ''}</button>
     <input type="checkbox" data-goal="${g.id}" ${g.done ? 'checked' : ''}>
+    ${depth < LEVELS.length - 1 ? `<span class="tag lv${depth}">${levelName(depth)}</span>` : ''}
     <span class="title" data-gedit="${g.id}" title="ダブルクリックで編集">${esc(g.title)}</span>
     ${kids.length ? `<span class="time">${Math.round(p.done / p.total * 100)}%</span>` : ''}
     ${deadlineTag(g)}
     <span class="actions">
-      <button data-gadd="${g.id}" title="下にステップを追加">＋</button>
-      ${g.done ? '' : `<button data-gai="${g.id}" title="Claude にステップを相談">🤖</button>`}
+      <button data-gadd="${g.id}" title="下に${levelName(depth + 1)}を追加">＋</button>
+      ${g.done ? '' : `<button data-gai="${g.id}" title="Claude に${levelName(depth + 1)}を相談">🤖</button>`}
       <button data-gdate="${g.id}" title="期限を決める">📅</button>
+      <button data-gmove="${g.id}" title="別の場所へ移す">↪</button>
       ${kids.length || g.done ? '' : inToday ? '<span class="muted">今日に追加済み</span>'
         : `<button data-gtoday="${g.id}" title="今日のタスクに入れる">→今日</button>`}
       <button data-gdel="${g.id}" title="削除">✕</button>
@@ -616,7 +750,7 @@ function goalItems(g, depth) {
   if (open) html += kids.map(k => goalItems(k, depth + 1)).join('');
   if (addingUnder === g.id) {
     html += `<li style="padding-left:${pad + 20}px"><form class="add-step" data-gform="${g.id}">
-      <input type="text" placeholder="ステップを入力して Enter" autocomplete="off" enterkeyhint="done" required>
+      <input type="text" placeholder="${levelName(depth + 1)}を入力して Enter" autocomplete="off" enterkeyhint="done" required>
       <button class="primary" type="submit">追加</button></form></li>`;
   }
   if (pastingUnder === g.id) {
@@ -636,17 +770,26 @@ function stepPrompt(g) {
   const now = lines(g.id, 0);
   const path = [];
   for (let p = g; p; p = p.parentId && state.goals.find(x => x.id === p.parentId)) path.unshift(p.title);
+  const depth = path.length - 1, me = levelName(depth), child = levelName(depth + 1);
   return [
-    '長期目標を、実行できる小さなステップに分けるのを手伝ってください。',
+    depth === 0
+      ? '人生のビジョンを、期限つきの目標に分けるのを手伝ってください。'
+      : `${me}を、実行できる小さなステップに分けるのを手伝ってください。`,
     '',
-    `目標：${path.join(' › ')}`,
+    `${me}：${path.join(' › ')}`,
     `期限：${g.deadline || 'なし'}（今日は ${todayStr()}）`,
-    now.length ? `今あるステップ：\n${now.join('\n')}` : '今あるステップ：まだありません',
+    now.length ? `今ある${child}：\n${now.join('\n')}` : `今ある${child}：まだありません`,
     '',
     '進め方：',
     '- 分け方を決めるのにわからないことがあれば、まず私に質問してください',
-    '- ステップは 1 つ 30 分〜2 時間くらいでできる大きさにしてください',
-    '- 今あるステップと同じものは入れないでください',
+    ...(depth === 0 ? [
+      '- 目標は「いつまでに・何を・どれくらい」がはっきりしたものにしてください（例：3 月までに TOEIC 800 点）',
+      '- 目標の期限は、行の最後に（期限 2027-03-31）の形で書いてください',
+      '- それぞれの目標の下に、最初のステップを字下げして書いてもかまいません',
+    ] : [
+      '- ステップは 1 つ 30 分〜2 時間くらいでできる大きさにしてください',
+    ]),
+    `- 今ある${child}と同じものは入れないでください`,
     '- 決まったら、最後に「- 」で始まる箇条書きだけで一覧を出してください。グループに分けるときは半角スペース 2 つで字下げしてください',
   ].join('\n');
 }
@@ -674,10 +817,13 @@ function addPastedSteps(rootId, text) {
     let title = l.trim();
     while (MARK.test(title)) title = title.replace(MARK, '');
     title = title.replace(/\*\*/g, '').trim(); // 太字の記号
+    // 行の最後の「（期限 2027-03-31）」は期限として読む
+    let deadline = '';
+    title = title.replace(/\s*[（(]期限[:：]?\s*(\d{4}-\d{2}-\d{2})[）)]\s*$/, (m, d) => { deadline = d; return ''; }).trim();
     if (!title) return;
     while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
     const parentId = stack.length ? stack[stack.length - 1].id : rootId;
-    const g = { id: uid(), parentId, title, deadline: '', done: false, doneAt: null, createdAt: Date.now() + n++ };
+    const g = { id: uid(), parentId, title, deadline, done: false, doneAt: null, createdAt: Date.now() + n++ };
     state.goals.push(g);
     ops.push({ t: 'upsert', table: 'goals', row: goalRow(g) });
     stack.push({ indent, id: g.id });
@@ -691,6 +837,31 @@ function renderGoalTree() {
     : '<li class="empty">まだ目標がありません</li>';
   const f = $('goalTree').querySelector('form input, form textarea');
   if (f && document.activeElement !== f) f.focus();
+}
+// 移す先を選ぶ欄をその場に出す（自分と、自分の下にあるものは選べない）
+function moveGoal(el, g) {
+  const ng = new Set([g.id, ...descendants(g.id).map(x => x.id)]);
+  const opts = (id, depth) => childrenOf(id).filter(k => !ng.has(k.id)).flatMap(k =>
+    [`<option value="${k.id}" ${k.id === g.parentId ? 'selected' : ''}>${'　'.repeat(depth)}${esc(k.title)}（${levelName(depth)}）の下</option>`,
+     ...opts(k.id, depth + 1)]);
+  const sel = document.createElement('select');
+  sel.className = 'inline-picker';
+  sel.innerHTML = `<option value="" disabled>移す先を選ぶ</option>
+    <option value="top" ${g.parentId ? '' : 'selected'}>いちばん上（ビジョン）</option>${opts(null, 0).join('')}`;
+  el.replaceWith(sel);
+  sel.focus();
+  let finished = false;
+  const finish = () => {
+    if (finished) return; finished = true;
+    const to = sel.value === 'top' ? null : sel.value;
+    if (!sel.value || to === (g.parentId || null)) return render();
+    g.parentId = to;
+    if (to) { collapsed.delete(to); saveCollapsed(); }
+    commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
+  };
+  sel.addEventListener('change', finish);
+  sel.addEventListener('blur', finish);
+  sel.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); finished = true; render(); } });
 }
 function openGoals() { renderGoalTree(); if (!$('goalDialog').open) $('goalDialog').showModal(); }
 function saveCollapsed() { lsSet(KEY_COLLAPSED, [...collapsed]); }
@@ -775,6 +946,8 @@ goalTree.addEventListener('click', e => {
       if (!ok) pasteText = stepPrompt(g);
       renderGoalTree();
     });
+  } else if (d.gmove) {
+    moveGoal(e.target, state.goals.find(x => x.id === d.gmove));
   } else if (d.gpcancel !== undefined) {
     pastingUnder = null; pasteText = '';
     renderGoalTree();
