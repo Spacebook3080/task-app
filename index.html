@@ -119,7 +119,14 @@
   ul.goal-summary li { display: block; cursor: pointer; }
   .goal-summary .goal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .goal-summary .title { font-weight: 600; cursor: pointer; }
-  .goal-summary .progress { height: 6px; margin-top: 6px; }
+  .goal-summary .progress { height: 6px; margin-top: 6px; display: flex; }
+  .goal-summary .progress > div { flex: none; }
+  .goal-summary .progress > .recent { background: var(--low); }
+  .goal-recent { margin-top: 4px; font-size: 12px; }
+  .goal-recent .up { color: var(--low); font-weight: 600; }
+  .goal-next { display: flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 13px; }
+  .goal-next .title { font-weight: normal; flex: 1; }
+  .goal-next button { background: var(--accent-soft); color: var(--accent); border: none; border-radius: 6px; padding: 3px 8px; font-size: 12px; font-family: inherit; cursor: pointer; flex: none; }
   dialog.wide { width: min(680px, calc(100vw - 16px)); }
   .goal-tree li { flex-wrap: wrap; gap: 6px 8px; }
   .goal-tree .title { flex: 1 1 8em; }

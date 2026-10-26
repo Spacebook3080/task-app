@@ -262,13 +262,37 @@ function rootOf(g) {
   return g;
 }
 // 進み具合：いちばん下のステップのうち、終わった数（親が完了なら下も全部完了扱い）
-function leafCount(g, parentDone) {
-  const kids = childrenOf(g.id), d = parentDone || g.done;
-  if (!kids.length) return { done: d ? 1 : 0, total: 1 };
+// recent はこの 7 日で終わった数、last は最後に終わった日時
+const RECENT_DAYS = 7;
+function leafCount(g, parentAt) {
+  const kids = childrenOf(g.id);
+  const at = g.done ? (g.doneAt || 0) : parentAt; // 終わった日時（終わっていなければ undefined）
+  if (!kids.length) {
+    const d = at !== undefined;
+    return { done: d ? 1 : 0, total: 1, recent: d && at >= Date.now() - RECENT_DAYS * 86400000 ? 1 : 0, last: d ? at : 0 };
+  }
   return kids.reduce((s, k) => {
-    const c = leafCount(k, d);
-    return { done: s.done + c.done, total: s.total + c.total };
-  }, { done: 0, total: 0 });
+    const c = leafCount(k, at);
+    return { done: s.done + c.done, total: s.total + c.total, recent: s.recent + c.recent, last: Math.max(s.last, c.last) };
+  }, { done: 0, total: 0, recent: 0, last: 0 });
+}
+// 次にやるステップ：上から順に見て、最初のまだ終わっていない、いちばん下のステップ
+function nextStep(g) {
+  for (const k of childrenOf(g.id)) {
+    if (k.done) continue;
+    if (!childrenOf(k.id).length) return k;
+    const n = nextStep(k);
+    if (n) return n;
+  }
+  return null;
+}
+function goalToToday(g) {
+  const t = {
+    id: uid(), title: g.title, date: todayStr(), priority: 'mid', time: '', tag: '',
+    due: '', goalId: g.id, done: false, doneAt: null, createdAt: Date.now()
+  };
+  state.tasks.push(t);
+  commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
 }
 // 期限までの経過時間から見て、進み具合が足りているか
 function paceOf(g, p) {
@@ -351,14 +375,27 @@ function render() {
   $('goalCard').hidden = !tops.length;
   $('goalSummary').innerHTML = tops.map(g => {
     const p = leafCount(g), pct = Math.round(p.done / p.total * 100), pace = paceOf(g, p);
+    const recentPct = p.recent / p.total * 100;
+    const ago = p.last ? Math.round((parse(todayStr()) - parse(fmt(new Date(p.last)))) / 86400000) : -1;
+    const recent = p.total < 2 ? ''
+      : p.recent ? `<span class="up">この${RECENT_DAYS}日で +${p.recent}ステップ</span>`
+      : `<span>この${RECENT_DAYS}日は進みなし${ago > 0 ? `（最後に進んだのは${ago}日前）` : ''}</span>`;
+    const next = nextStep(g);
+    const inToday = next && state.tasks.some(t => t.goalId === next.id && !t.done);
     return `<li data-gopen="${g.id}">
       <div class="goal-head">
         <span class="title">${esc(g.title)}</span>
         ${deadlineTag(g)}
         ${pace ? `<span class="tag ${pace === 'late' ? 'soon' : 'ok'}">${pace === 'late' ? '遅れ気味' : '順調'}</span>` : ''}
-        <span class="time">${pct}%</span>
+        <span class="time">${p.total > 1 ? `${p.done}/${p.total}ステップ・` : ''}${pct}%</span>
       </div>
-      <div class="progress"><div style="width:${pct}%"></div></div></li>`;
+      <div class="progress"><div style="width:${pct - recentPct}%"></div><div class="recent" style="width:${recentPct}%"></div></div>
+      ${recent ? `<div class="goal-recent muted">${recent}</div>` : ''}
+      ${next ? `<div class="goal-next">
+        <span class="muted">次：</span><span class="title">${esc(next.title)}</span>
+        ${inToday ? '<span class="muted">今日に追加済み</span>'
+          : `<button data-gtoday="${next.id}" title="今日のタスクに入れる">→今日</button>`}
+      </div>` : ''}</li>`;
   }).join('');
   if ($('goalDialog').open) renderGoalTree();
 
@@ -598,7 +635,10 @@ function newGoal(title, parentId, deadline) {
 }
 
 $('openGoals').onclick = openGoals;
-$('goalSummary').addEventListener('click', openGoals);
+$('goalSummary').addEventListener('click', e => {
+  const id = e.target.dataset.gtoday;
+  if (id) goalToToday(state.goals.find(x => x.id === id)); else openGoals();
+});
 $('goalForm').addEventListener('submit', e => {
   e.preventDefault();
   const title = $('goalTitle').value.trim();
@@ -650,13 +690,7 @@ goalTree.addEventListener('click', e => {
       commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
     });
   } else if (d.gtoday) {
-    const g = state.goals.find(x => x.id === d.gtoday);
-    const t = {
-      id: uid(), title: g.title, date: todayStr(), priority: 'mid', time: '', tag: '',
-      due: '', goalId: g.id, done: false, doneAt: null, createdAt: Date.now()
-    };
-    state.tasks.push(t);
-    commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
+    goalToToday(state.goals.find(x => x.id === d.gtoday));
   } else if (d.gdel) {
     const g = state.goals.find(x => x.id === d.gdel);
     const ids = [g.id, ...descendants(g.id).map(x => x.id)];
