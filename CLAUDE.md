@@ -49,7 +49,12 @@
 1. ~~目標の進み具合を見やすくする~~（済。段階の名前・週の振り返りも済）
 2. 習慣と目標のひもづけ
 3. 数値で測る目標
-4. Claude とつないで進み具合を相談する（有料の API は避けたい。今はコピペ方式。自動化の案: claude.ai の Supabase コネクタ、Claude のスケジュールタスク + Google ドライブ（ユーザー発案。Claude がアプリのデータをどう読み書きするかが課題））
+4. Claude とつないで進み具合を相談する（有料の API は避けたい）
+   - コピペ方式（🤖 ボタン）に加えて、クラウドのスケジュールタスクで週の振り返りを自動で書く仕組みを作った（2026-10-26）
+   - 窓口は Edge Function `supabase/functions/ai`（Verify JWT オフ）。アプリの ⚙ 設定で作った合言葉（`ai_tokens` に SHA-256 だけ保存）を `Authorization: Bearer` で受け取り、`week`（7 日分の記録を返す）と `post`（`ai_messages` に保存して通知）だけができる
+   - 合言葉は claude.ai の cloud environment のネットワークシークレット（ホスト `ndmemqobhhivlsjshowk.supabase.co`）に登録。Claude からは値が見えない
+   - スケジュールタスクの手順書は `supabase/claude-weekly-review.md`（タスクの指示文は「このファイルを読んでその手順どおりに」）
+   - Supabase コネクタ（何でもできてしまう）と Google ドライブ経由（アプリに Google ログインが必要）は比べた上で見送り
 - 保留: 年間カレンダー（1 年分をマス目で表示し、タスクを終えた日ほど濃くする）、習慣の連続記録、週の予定表、締切前の通知
 
 ## ユーザーについて

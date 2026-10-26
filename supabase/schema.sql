@@ -122,6 +122,37 @@ drop policy if exists "own notify_settings" on public.notify_settings;
 create policy "own notify_settings" on public.notify_settings
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+-- ---------- Claude との連携（Edge Function「ai」が窓口） ----------
+-- 合言葉（アプリで作る）。そのものは保存せず、SHA-256 にした値だけを持つ
+create table if not exists public.ai_tokens (
+  token_hash  text primary key,
+  user_id     uuid not null default auth.uid() references auth.users on delete cascade,
+  created_at  timestamptz not null default now()
+);
+
+-- Claude からの便り（週の振り返りなど）。steps は [{ parent_id, title, added }] のステップ案
+create table if not exists public.ai_messages (
+  id          text primary key default gen_random_uuid()::text,
+  user_id     uuid not null default auth.uid() references auth.users on delete cascade,
+  kind        text not null default 'review',
+  period_end  date,
+  body        text not null,
+  steps       jsonb not null default '[]',
+  created_at  timestamptz not null default now(),
+  read_at     timestamptz
+);
+
+alter table public.ai_tokens   enable row level security;
+alter table public.ai_messages enable row level security;
+
+drop policy if exists "own ai_tokens" on public.ai_tokens;
+create policy "own ai_tokens" on public.ai_tokens
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own ai_messages" on public.ai_messages;
+create policy "own ai_messages" on public.ai_messages
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
 -- 5 分ごとに Edge Function「push」を呼ぶ（送る時刻かどうかは関数の中で判断する）
 create extension if not exists pg_cron with schema pg_catalog;
 create extension if not exists pg_net with schema extensions;

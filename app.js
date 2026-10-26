@@ -24,7 +24,7 @@ let mutations = 0; // pull 中に変更が入ったかを判定する
 const $ = id => document.getElementById(id);
 
 // ---------- 小物 ----------
-function emptyState() { return { tasks: [], routines: [], routineDone: {}, notes: {}, goals: [] }; }
+function emptyState() { return { tasks: [], routines: [], routineDone: {}, notes: {}, goals: [], aiMessages: [] }; }
 function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
@@ -71,6 +71,19 @@ function rowToGoal(r) {
   return {
     id: r.id, parentId: r.parent_id || null, title: r.title, deadline: r.deadline || '',
     done: r.done, doneAt: r.done_at ? Date.parse(r.done_at) : null, createdAt: Date.parse(r.created_at)
+  };
+}
+// Claude からの便り（書くのは Edge Function「ai」。アプリは既読とステップの追加済みだけを書きかえる）
+function aiRow(m) {
+  return {
+    id: m.id, user_id: userId(), kind: m.kind, period_end: m.periodEnd || null, body: m.body,
+    steps: m.steps, created_at: iso(m.createdAt), read_at: iso(m.readAt)
+  };
+}
+function rowToAi(r) {
+  return {
+    id: r.id, kind: r.kind, periodEnd: r.period_end || '', body: r.body, steps: r.steps || [],
+    createdAt: Date.parse(r.created_at), readAt: r.read_at ? Date.parse(r.read_at) : null
   };
 }
 
@@ -143,13 +156,14 @@ async function pull() {
     if (queue.length) return; // 送れていない変更がある間は上書きしない
     setSync('syncing');
     const before = mutations;
-    const [tasks, routines, logs, notes, goals] = await Promise.all([
+    const [tasks, routines, logs, notes, goals, ai] = await Promise.all([
       fetchAll('tasks', '*', 'id'),
       fetchAll('routines', 'id,title,days,created_at', 'created_at'),
       fetchAll('routine_logs', 'routine_id,date', 'date'),
       fetchAll('notes', 'date,body', 'date'),
       // 目標のテーブルがまだ無くても、ほかのデータは読めるようにする
-      fetchAll('goals', '*', 'created_at').catch(e => { console.warn(e); return null; })
+      fetchAll('goals', '*', 'created_at').catch(e => { console.warn(e); return null; }),
+      fetchAll('ai_messages', '*', 'created_at').catch(e => { console.warn(e); return null; })
     ]);
     if (mutations !== before) { setTimeout(pull, 1000); return; } // 取得中に変更されたら取り直す
     const next = emptyState();
@@ -158,6 +172,7 @@ async function pull() {
     logs.forEach(l => (next.routineDone[l.date] = next.routineDone[l.date] || []).push(l.routine_id));
     notes.forEach(n => { next.notes[n.date] = n.body; });
     next.goals = goals ? goals.map(rowToGoal) : state.goals;
+    next.aiMessages = ai ? ai.map(rowToAi) : (state.aiMessages || []);
     state = next;
     saveCache();
     render();
@@ -403,6 +418,7 @@ function render() {
   if ($('goalDialog').open) renderGoalTree();
 
   renderReview();
+  renderAi();
 
   // メモ
   if (document.activeElement !== $('memo')) $('memo').value = state.notes[current] || '';
@@ -538,6 +554,43 @@ $('reviewAi').onclick = () => {
 $('reviewDay').innerHTML = WEEK.map((w, i) => `<option value="${i}">${w}曜日</option>`).join('');
 $('reviewDay').value = reviewDay();
 $('reviewDay').addEventListener('change', e => { lsSet(KEY_REVIEW_DAY, Number(e.target.value)); render(); });
+
+// ---------- Claude からの便り ----------
+// まだ「読んだ」にしていない便りのうち、いちばん新しいものを表示する
+function currentAi() {
+  return (state.aiMessages || []).filter(m => !m.readAt).sort((a, b) => b.createdAt - a.createdAt)[0];
+}
+function renderAi() {
+  const m = currentAi();
+  $('aiCard').hidden = !m;
+  if (!m) return;
+  const d = new Date(m.createdAt);
+  $('aiDate').textContent = `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
+  $('aiBody').textContent = m.body;
+  $('aiSteps').innerHTML = m.steps.length ? '<li class="muted ai-steps-head">ステップ案（押すと目標に入ります）</li>' + m.steps.map((s, i) => {
+    const parent = state.goals.find(g => g.id === s.parent_id);
+    return `<li class="${s.added ? 'done' : ''}">
+      <span class="title">${esc(s.title)}<small class="muted">${parent ? `　${esc(parent.title)} の下` : '　（元の目標がありません）'}</small></span>
+      ${s.added ? '<span class="muted">追加済み</span>'
+        : parent ? `<button data-aistep="${i}">追加</button>` : ''}</li>`;
+  }).join('') : '';
+}
+$('aiSteps').addEventListener('click', e => {
+  const i = e.target.dataset.aistep;
+  const m = currentAi();
+  if (i === undefined || !m) return;
+  const s = m.steps[i];
+  const g = { id: uid(), parentId: s.parent_id, title: s.title, deadline: '', done: false, doneAt: null, createdAt: Date.now() };
+  state.goals.push(g);
+  s.added = true;
+  commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }, { t: 'upsert', table: 'ai_messages', row: aiRow(m) }]);
+});
+$('aiRead').onclick = () => {
+  const m = currentAi();
+  if (!m) return;
+  m.readAt = Date.now();
+  commit([{ t: 'upsert', table: 'ai_messages', row: aiRow(m) }]);
+};
 
 // ---------- タスクの操作 ----------
 $('addForm').addEventListener('submit', e => {
@@ -991,6 +1044,7 @@ $('openData').onclick = () => {
   $('logoutBtn').hidden = $('changePwBtn').hidden = !session;
   $('dataDialog').showModal();
   loadNotify();
+  loadAiToken();
 };
 $('exportBtn').onclick = () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -1015,6 +1069,41 @@ $('importFile').addEventListener('change', async e => {
 $('logoutBtn').onclick = async () => {
   if (queue.length && !confirm('まだ送れていない変更があります。ログアウトすると消えますが、よろしいですか？')) return;
   await sb.auth.signOut();
+};
+
+// ---------- Claude 用の合言葉 ----------
+// 合言葉そのものは保存せず、SHA-256 にした値だけをサーバーに置く。表示は作った直後の 1 回だけ
+async function sha256Hex(s) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function loadAiToken() {
+  $('aiBox').hidden = !session;
+  $('aiTokenOut').hidden = true;
+  if (!session) return;
+  const { data, error } = await sb.from('ai_tokens').select('created_at').order('created_at', { ascending: false }).limit(1);
+  if (error) { $('aiTokenMsg').textContent = 'まだ準備ができていません（Supabase で SQL を実行してください）。'; $('aiTokenBtn').disabled = true; return; }
+  $('aiTokenBtn').disabled = false;
+  const made = data && data[0] && new Date(data[0].created_at);
+  $('aiTokenBtn').textContent = made ? '合言葉を作り直す' : '合言葉を作る';
+  $('aiTokenMsg').textContent = made
+    ? `合言葉は ${made.getMonth() + 1}/${made.getDate()} に作ってあります。作り直すと、前の合言葉は使えなくなります。`
+    : '作った合言葉を、claude.ai のネットワークシークレットに登録します。';
+}
+$('aiTokenBtn').onclick = async () => {
+  if ($('aiTokenBtn').textContent.includes('作り直す') && !confirm('合言葉を作り直しますか？\nclaude.ai に登録した合言葉も入れかえる必要があります。')) return;
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const token = 'ai_' + btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const del = await sb.from('ai_tokens').delete().eq('user_id', userId());
+  const ins = del.error ? del : await sb.from('ai_tokens').insert({ token_hash: await sha256Hex(token), user_id: userId() });
+  if (ins.error) { $('aiTokenMsg').textContent = '作れませんでした：' + ins.error.message; return; }
+  $('aiTokenOut').value = token;
+  $('aiTokenOut').hidden = false;
+  $('aiTokenOut').select();
+  const ok = await copyText(token);
+  $('aiTokenBtn').textContent = '合言葉を作り直す';
+  $('aiTokenMsg').textContent = (ok ? 'コピーしました。' : '上の合言葉を選んでコピーしてください。')
+    + 'この合言葉は今だけ表示されます。claude.ai に登録したら、ほかの場所には貼らないでください。';
 };
 
 // ---------- 毎朝の通知（Web Push） ----------

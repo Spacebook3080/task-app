@@ -152,6 +152,15 @@
 
   textarea.memo { width: 100%; min-height: 80px; resize: vertical; }
 
+  /* Claude から */
+  .ai-card { border-left: 4px solid var(--accent); }
+  .ai-body { white-space: pre-wrap; font-size: 14px; line-height: 1.7; }
+  .ai-steps { margin-top: 8px; }
+  .ai-steps li { font-size: 14px; }
+  .ai-steps .ai-steps-head { font-size: 12px; padding-bottom: 0; }
+  .ai-steps small { font-size: 12px; }
+  .ai-steps button { background: var(--accent-soft); color: var(--accent); border: none; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-family: inherit; cursor: pointer; flex: none; }
+
   /* 週の振り返り */
   .review-stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; margin-bottom: 8px; }
   .review-stats b { font-size: 18px; }
@@ -260,6 +269,13 @@
     </form>
   </div>
 
+  <div class="card ai-card" id="aiCard" hidden>
+    <h2>🤖 Claude から <span class="muted" id="aiDate"></span></h2>
+    <div class="ai-body" id="aiBody"></div>
+    <ul class="list ai-steps" id="aiSteps"></ul>
+    <div class="row" style="margin:10px 0 0"><button class="icon-btn" id="aiRead">読んだ</button></div>
+  </div>
+
   <div class="card" id="routineCard">
     <h2>🔁 毎日の習慣 <span class="muted" id="routineCount"></span></h2>
     <ul class="list" id="routineList"></ul>
@@ -358,6 +374,15 @@
       <button class="icon-btn" id="notifyTest" hidden>テスト通知</button>
     </div>
     <p class="muted" id="notifyMsg"></p>
+  </div>
+  <div id="aiBox" hidden>
+    <h3 style="margin-top:20px">🤖 Claude との連携</h3>
+    <p class="muted" style="margin-top:0">Claude のスケジュールタスクが、週の振り返りを書いて届けてくれます。</p>
+    <div class="row">
+      <button class="primary" id="aiTokenBtn">合言葉を作る</button>
+    </div>
+    <input type="text" id="aiTokenOut" readonly hidden style="width:100%;margin-bottom:8px;font-family:monospace;font-size:13px">
+    <p class="muted" id="aiTokenMsg"></p>
   </div>
   <div class="dialog-foot">
     <span style="display:flex;gap:6px">
