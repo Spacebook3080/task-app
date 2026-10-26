@@ -54,6 +54,7 @@
    - 窓口は Edge Function `supabase/functions/ai`（Verify JWT オフ）。アプリの ⚙ 設定で作った合言葉（`ai_tokens` に SHA-256 だけ保存）を `Authorization: Bearer` で受け取り、`week`（7 日分の記録を返す）と `post`（`ai_messages` に保存して通知）だけができる
    - 合言葉は claude.ai の cloud environment のネットワークシークレット（ホスト `ndmemqobhhivlsjshowk.supabase.co`）に登録。Claude からは値が見えない
    - スケジュールタスクの手順書は `supabase/claude-weekly-review.md`（タスクの指示文は「このファイルを読んでその手順どおりに」）
+   - 設定済み・動作確認済み（2026-10-26）: SQL 実行、関数 `ai` を配置（Verify JWT オフ）、合言葉を cloud environment「Default」（ネットワーク: 制限付き）に登録、スケジュールタスク「週の振り返り」（毎週日曜 20:07、リポジトリ task-app、コネクタなし）。今すぐ実行で iPhone に通知が届いた
    - Supabase コネクタ（何でもできてしまう）と Google ドライブ経由（アプリに Google ログインが必要）は比べた上で見送り
 - 保留: 年間カレンダー（1 年分をマス目で表示し、タスクを終えた日ほど濃くする）、習慣の連続記録、週の予定表、締切前の通知
 
