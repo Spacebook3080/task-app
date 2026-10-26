@@ -687,6 +687,7 @@ $('openData').onclick = () => {
     : 'データはこの端末のブラウザだけに保存されています。';
   $('logoutBtn').hidden = $('changePwBtn').hidden = !session;
   $('dataDialog').showModal();
+  loadNotify();
 };
 $('exportBtn').onclick = () => {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -711,6 +712,84 @@ $('importFile').addEventListener('change', async e => {
 $('logoutBtn').onclick = async () => {
   if (queue.length && !confirm('まだ送れていない変更があります。ログアウトすると消えますが、よろしいですか？')) return;
   await sb.auth.signOut();
+};
+
+// ---------- 毎朝の通知（Web Push） ----------
+const pushReady = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
+let pushSub = null;   // この端末の通知の登録
+let vapidKey = null;  // 通知を送るサーバーの公開鍵（Edge Function から受け取る）
+
+function notifyMsg(text) { $('notifyMsg').textContent = text; }
+function b64ToBytes(s) {
+  const b = atob((s + '='.repeat((4 - s.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(b, c => c.charCodeAt(0));
+}
+async function loadNotify() {
+  $('notifyBox').hidden = !session;
+  if (!session) return;
+  $('notifyToggle').disabled = !pushReady;
+  if (!pushReady) {
+    notifyMsg(isIOS ? 'iPhone では、ホーム画面に追加したアプリから開くと通知をオンにできます。' : 'このブラウザは通知に対応していません。');
+    return;
+  }
+  const { data } = await sb.from('notify_settings').select('morning_time').maybeSingle();
+  if (data) $('notifyTime').value = data.morning_time;
+  const reg = await navigator.serviceWorker.getRegistration();
+  pushSub = reg ? await reg.pushManager.getSubscription() : null;
+  $('notifyToggle').textContent = pushSub ? 'この端末の通知をオフにする' : 'この端末で通知をオンにする';
+  $('notifyTest').hidden = !pushSub;
+  notifyMsg(pushSub
+    ? `この端末に、毎朝 ${$('notifyTime').value} ごろ今日の予定が届きます。`
+    : 'オンにすると、毎朝決めた時刻に今日のタスクと習慣が届きます。');
+  // iPhone では許可を求めたあとすぐ登録しないと失敗することがあるので、鍵は先にもらっておく
+  if (!pushSub && !vapidKey) {
+    const res = await sb.functions.invoke('push', { body: { action: 'key' } });
+    if (res.data && res.data.publicKey) vapidKey = res.data.publicKey;
+  }
+}
+function saveNotifyTime() {
+  return sb.from('notify_settings').upsert({
+    user_id: userId(), morning_time: $('notifyTime').value || '07:00',
+    tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo'
+  });
+}
+$('notifyTime').addEventListener('change', async () => {
+  const { error } = await saveNotifyTime();
+  if (error) notifyMsg('時刻を保存できませんでした：' + error.message);
+  else loadNotify();
+});
+$('notifyToggle').onclick = async () => {
+  $('notifyToggle').disabled = true;
+  try {
+    if (pushSub) {
+      await sb.from('push_subscriptions').delete().eq('endpoint', pushSub.endpoint);
+      await pushSub.unsubscribe();
+    } else {
+      if (await Notification.requestPermission() !== 'granted') {
+        notifyMsg('通知が許可されていません。iPhone の「設定」→「通知」→「毎日のタスク」から許可できます。');
+        return;
+      }
+      if (!vapidKey) throw new Error('通知の準備がまだできていません（Edge Function「push」が動いていないかもしれません）');
+      const reg = await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(vapidKey) })).toJSON();
+      const res = await sb.from('push_subscriptions').upsert({ endpoint: sub.endpoint, user_id: userId(), p256dh: sub.keys.p256dh, auth: sub.keys.auth });
+      if (res.error) throw res.error;
+      const res2 = await saveNotifyTime();
+      if (res2.error) throw res2.error;
+    }
+    await loadNotify();
+  } catch (err) {
+    notifyMsg('エラー：' + (err.message || err));
+  } finally {
+    $('notifyToggle').disabled = false;
+  }
+};
+$('notifyTest').onclick = async () => {
+  notifyMsg('送信中…');
+  const { data, error } = await sb.functions.invoke('push', { body: { action: 'test' } });
+  notifyMsg(error ? 'エラー：' + error.message
+    : data.sent ? 'テスト通知を送りました。数秒で届きます。' : '送り先の端末が見つかりませんでした。通知をオンにし直してください。');
 };
 
 // ---------- ログイン ----------

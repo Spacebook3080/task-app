@@ -304,6 +304,15 @@
     </label>
   </div>
   <p class="muted">読み込んだデータは、今のデータに追加されます。</p>
+  <div id="notifyBox">
+    <h3 style="margin-top:20px">🔔 毎朝の通知</h3>
+    <div class="row">
+      <label class="due-field">時刻 <input type="time" id="notifyTime" value="07:00"></label>
+      <button class="primary" id="notifyToggle">この端末で通知をオンにする</button>
+      <button class="icon-btn" id="notifyTest" hidden>テスト通知</button>
+    </div>
+    <p class="muted" id="notifyMsg"></p>
+  </div>
   <div class="dialog-foot">
     <span style="display:flex;gap:6px">
       <button class="icon-btn" id="logoutBtn">ログアウト</button>

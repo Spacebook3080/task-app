@@ -1,5 +1,5 @@
 // オフラインでもアプリを開けるようにするための Service Worker
-const CACHE = 'dtm-v2';
+const CACHE = 'dtm-v3';
 const SUPABASE_LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
 const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png', SUPABASE_LIB];
 
@@ -38,4 +38,27 @@ self.addEventListener('fetch', e => {
     );
   }
   // それ以外（Supabase の通信など）は Service Worker を通さない
+});
+
+// 毎朝の通知（Edge Function「push」から届く）
+self.addEventListener('push', e => {
+  let msg = {};
+  try { msg = e.data ? e.data.json() : {}; } catch (err) { msg = { body: e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(msg.title || '毎日のタスク', {
+    body: msg.body || '',
+    icon: 'icons/icon-192.png',
+    tag: msg.tag || 'morning',
+    data: { url: msg.url || './' }
+  }));
+});
+
+// 通知を押したらアプリを開く（開いていればそれを前に出す）
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      const win = list.find(c => 'focus' in c);
+      return win ? win.focus() : self.clients.openWindow(e.notification.data.url);
+    })
+  );
 });

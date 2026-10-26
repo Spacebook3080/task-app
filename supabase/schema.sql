@@ -83,3 +83,52 @@ create policy "own notes" on public.notes
 drop policy if exists "own goals" on public.goals;
 create policy "own goals" on public.goals
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- ---------- 毎朝の通知（Web Push） ----------
+-- 通知を受け取る端末（ホーム画面に追加したアプリごとに 1 行）
+create table if not exists public.push_subscriptions (
+  endpoint    text primary key,
+  user_id     uuid not null default auth.uid() references auth.users on delete cascade,
+  p256dh      text not null,
+  auth        text not null,
+  created_at  timestamptz not null default now()
+);
+
+-- 通知の時刻。last_sent は送った日（Edge Function が書く）
+create table if not exists public.notify_settings (
+  user_id       uuid primary key default auth.uid() references auth.users on delete cascade,
+  morning_time  text not null default '07:00',
+  tz            text not null default 'Asia/Tokyo',
+  last_sent     date
+);
+
+-- 通知を送るための鍵（Edge Function が初回に自動で作る）。
+-- ポリシーを作らないので、アプリからは読めず Edge Function（service_role）だけが使える
+create table if not exists public.push_keys (
+  id           int primary key,
+  public_key   text not null,
+  private_key  text not null
+);
+
+alter table public.push_subscriptions enable row level security;
+alter table public.notify_settings    enable row level security;
+alter table public.push_keys          enable row level security;
+
+drop policy if exists "own push_subscriptions" on public.push_subscriptions;
+create policy "own push_subscriptions" on public.push_subscriptions
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own notify_settings" on public.notify_settings;
+create policy "own notify_settings" on public.notify_settings
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- 5 分ごとに Edge Function「push」を呼ぶ（送る時刻かどうかは関数の中で判断する）
+create extension if not exists pg_cron with schema pg_catalog;
+create extension if not exists pg_net with schema extensions;
+select cron.schedule('morning-push', '*/5 * * * *', $$
+  select net.http_post(
+    url := 'https://ndmemqobhhivlsjshowk.supabase.co/functions/v1/push',
+    headers := '{"Content-Type": "application/json"}'::jsonb,
+    body := '{"action": "cron"}'::jsonb
+  );
+$$);
