@@ -591,6 +591,7 @@ $('routineEditList').addEventListener('click', e => {
 // ---------- 目標の設定（ツリー） ----------
 let collapsed = new Set(lsGet(KEY_COLLAPSED) || []);
 let addingUnder = null; // 下にステップを追加している目標
+let pastingUnder = null, pasteText = '', pasteNote = ''; // Claude の返事を貼っている目標
 
 function goalItems(g, depth) {
   const kids = childrenOf(g.id);
@@ -606,6 +607,7 @@ function goalItems(g, depth) {
     ${deadlineTag(g)}
     <span class="actions">
       <button data-gadd="${g.id}" title="下にステップを追加">＋</button>
+      ${g.done ? '' : `<button data-gai="${g.id}" title="Claude にステップを相談">🤖</button>`}
       <button data-gdate="${g.id}" title="期限を決める">📅</button>
       ${kids.length || g.done ? '' : inToday ? '<span class="muted">今日に追加済み</span>'
         : `<button data-gtoday="${g.id}" title="今日のタスクに入れる">→今日</button>`}
@@ -617,13 +619,77 @@ function goalItems(g, depth) {
       <input type="text" placeholder="ステップを入力して Enter" autocomplete="off" enterkeyhint="done" required>
       <button class="primary" type="submit">追加</button></form></li>`;
   }
+  if (pastingUnder === g.id) {
+    html += `<li style="padding-left:${pad + 20}px"><form class="paste-steps" data-gpaste="${g.id}">
+      <p class="muted">${pasteNote}</p>
+      <textarea placeholder="- ステップ1&#10;  - 細かいステップ&#10;- ステップ2">${esc(pasteText)}</textarea>
+      <div class="row"><button class="primary" type="submit">まとめて追加</button>
+      <button type="button" data-gpcancel>やめる</button></div></form></li>`;
+  }
   return html;
+}
+
+// Claude に貼る依頼文
+function stepPrompt(g) {
+  const lines = (id, depth) => childrenOf(id).flatMap(k =>
+    [`${'  '.repeat(depth)}- ${k.done ? '[済] ' : ''}${k.title}`, ...lines(k.id, depth + 1)]);
+  const now = lines(g.id, 0);
+  const path = [];
+  for (let p = g; p; p = p.parentId && state.goals.find(x => x.id === p.parentId)) path.unshift(p.title);
+  return [
+    '長期目標を、実行できる小さなステップに分けるのを手伝ってください。',
+    '',
+    `目標：${path.join(' › ')}`,
+    `期限：${g.deadline || 'なし'}（今日は ${todayStr()}）`,
+    now.length ? `今あるステップ：\n${now.join('\n')}` : '今あるステップ：まだありません',
+    '',
+    '進め方：',
+    '- 分け方を決めるのにわからないことがあれば、まず私に質問してください',
+    '- ステップは 1 つ 30 分〜2 時間くらいでできる大きさにしてください',
+    '- 今あるステップと同じものは入れないでください',
+    '- 決まったら、最後に「- 」で始まる箇条書きだけで一覧を出してください。グループに分けるときは半角スペース 2 つで字下げしてください',
+  ].join('\n');
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove();
+  return ok;
+}
+// 箇条書きを読んで、字下げどおりにステップを作る
+function addPastedSteps(rootId, text) {
+  const MARK = /^(?:[-*+•]\s+|・\s*|\d+[.)．、]\s*|\[[ xX]\]\s*)/;
+  let rows = text.replace(/\t/g, '    ').replace(/　/g, '  ').split(/\r?\n/)
+    .filter(l => l.trim() && !l.trim().startsWith('```'));
+  // 前後に説明文があっても、箇条書きの行だけを使う
+  if (rows.some(l => MARK.test(l.trim()))) rows = rows.filter(l => MARK.test(l.trim()));
+  const stack = [], ops = [];
+  let n = 0;
+  rows.forEach(l => {
+    const indent = l.length - l.trimStart().length;
+    let title = l.trim();
+    while (MARK.test(title)) title = title.replace(MARK, '');
+    title = title.replace(/\*\*/g, '').trim(); // 太字の記号
+    if (!title) return;
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    const parentId = stack.length ? stack[stack.length - 1].id : rootId;
+    const g = { id: uid(), parentId, title, deadline: '', done: false, doneAt: null, createdAt: Date.now() + n++ };
+    state.goals.push(g);
+    ops.push({ t: 'upsert', table: 'goals', row: goalRow(g) });
+    stack.push({ indent, id: g.id });
+  });
+  if (ops.length) commit(ops);
+  return ops.length;
 }
 function renderGoalTree() {
   const tops = childrenOf(null);
   $('goalTree').innerHTML = tops.length ? tops.map(g => goalItems(g, 0)).join('')
     : '<li class="empty">まだ目標がありません</li>';
-  const f = $('goalTree').querySelector('form input');
+  const f = $('goalTree').querySelector('form input, form textarea');
   if (f && document.activeElement !== f) f.focus();
 }
 function openGoals() { renderGoalTree(); if (!$('goalDialog').open) $('goalDialog').showModal(); }
@@ -651,6 +717,16 @@ $('goalForm').addEventListener('submit', e => {
 const goalTree = $('goalTree');
 goalTree.addEventListener('submit', e => {
   e.preventDefault();
+  if (e.target.dataset.gpaste) {
+    const id = e.target.dataset.gpaste;
+    const n = addPastedSteps(id, e.target.querySelector('textarea').value);
+    if (!n) { alert('ステップが見つかりませんでした。「- 」で始まる箇条書きを貼ってください。'); return; }
+    pastingUnder = null; pasteText = '';
+    collapsed.delete(id);
+    saveCollapsed();
+    renderGoalTree();
+    return;
+  }
   const input = e.target.querySelector('input');
   const title = input.value.trim();
   if (!title) return;
@@ -658,11 +734,15 @@ goalTree.addEventListener('submit', e => {
   // 続けて入力できるように、追加欄は開いたままにする
 });
 goalTree.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && e.target.closest('form[data-gform]')) {
+  if (e.key === 'Escape' && e.target.closest('form[data-gform], form[data-gpaste]')) {
     e.preventDefault(); // ダイアログごと閉じないように
-    addingUnder = null;
+    addingUnder = pastingUnder = null;
     renderGoalTree();
   }
+});
+// 貼った文は、画面が描き直されても消えないように覚えておく
+goalTree.addEventListener('input', e => {
+  if (e.target.closest('form[data-gpaste]')) pasteText = e.target.value;
 });
 goalTree.addEventListener('change', e => {
   const g = state.goals.find(x => x.id === e.target.dataset.goal);
@@ -681,6 +761,22 @@ goalTree.addEventListener('click', e => {
     addingUnder = addingUnder === d.gadd ? null : d.gadd;
     collapsed.delete(d.gadd);
     saveCollapsed();
+    renderGoalTree();
+  } else if (d.gai) {
+    const g = state.goals.find(x => x.id === d.gai);
+    addingUnder = null;
+    pastingUnder = d.gai; pasteText = '';
+    pasteNote = '依頼文をコピーしています…';
+    renderGoalTree();
+    copyText(stepPrompt(g)).then(ok => {
+      pasteNote = ok
+        ? '依頼文をコピーしました。Claude アプリに貼って相談し、最後に出てきた箇条書きをここに貼ってください。'
+        : 'コピーできませんでした。下の依頼文を選んでコピーし、Claude の返事が来たら書きかえてください。';
+      if (!ok) pasteText = stepPrompt(g);
+      renderGoalTree();
+    });
+  } else if (d.gpcancel !== undefined) {
+    pastingUnder = null; pasteText = '';
     renderGoalTree();
   } else if (d.gdate) {
     const g = state.goals.find(x => x.id === d.gdate);
@@ -712,7 +808,7 @@ goalTree.addEventListener('dblclick', e => {
     commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
   });
 });
-$('goalDialog').addEventListener('close', () => { addingUnder = null; });
+$('goalDialog').addEventListener('close', () => { addingUnder = pastingUnder = null; pasteText = ''; });
 
 // ---------- 設定・バックアップ ----------
 $('openData').onclick = () => {
