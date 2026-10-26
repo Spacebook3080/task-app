@@ -25,6 +25,13 @@
 - `supabase/schema.sql` … テーブル定義と RLS（本人の行だけ読み書き可）。スキーマを変えるときはここを更新し、ユーザーに SQL Editor で実行してもらう
   - SQL Editor: https://supabase.com/dashboard/project/ndmemqobhhivlsjshowk/sql/new
 
+## 2 台の PC で開発している
+- ノート PC（LAPTOP-2K2H9E2A）: `C:\Users\Axely\Desktop\タスク管理`
+- 自宅デスクトップ PC（DESKTOP-BS96LUJ、メインにする予定）: `C:\Users\Axely\OneDrive\デスクトップ\タスク管理`
+- 作業を始めるときは、まず `git pull` で、もう 1 台での変更を取り込む
+- 区切りがついたら commit して `git push` まで行う。push していない変更は、もう 1 台からは見えない
+- iPhone からはリモートコントロールで操作する
+
 ## 開発・確認方法
 - ローカル確認: `.claude/launch.json` の `task-app`（PowerShell 製の簡易サーバー `.claude/serve.ps1`、http://localhost:8080）
 - ローカルでも本番の Supabase につながる。テストでデータを作ったら必ず消す
