@@ -560,31 +560,57 @@ $('reviewDay').addEventListener('change', e => { lsSet(KEY_REVIEW_DAY, Number(e.
 function currentAi() {
   return (state.aiMessages || []).filter(m => !m.readAt).sort((a, b) => b.createdAt - a.createdAt)[0];
 }
-function renderAi() {
-  const m = currentAi();
-  $('aiCard').hidden = !m;
-  if (!m) return;
+function aiDateText(m) {
   const d = new Date(m.createdAt);
-  $('aiDate').textContent = `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
-  $('aiBody').textContent = m.body;
-  $('aiSteps').innerHTML = m.steps.length ? '<li class="muted ai-steps-head">ステップ案（押すと目標に入ります）</li>' + m.steps.map((s, i) => {
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
+}
+function aiStepsHtml(m) {
+  return m.steps.length ? '<li class="muted ai-steps-head">ステップ案（押すと目標に入ります）</li>' + m.steps.map((s, i) => {
     const parent = state.goals.find(g => g.id === s.parent_id);
     return `<li class="${s.added ? 'done' : ''}">
       <span class="title">${esc(s.title)}<small class="muted">${parent ? `　${esc(parent.title)} の下` : '　（元の目標がありません）'}</small></span>
       ${s.added ? '<span class="muted">追加済み</span>'
-        : parent ? `<button data-aistep="${i}">追加</button>` : ''}</li>`;
+        : parent ? `<button data-aimsg="${m.id}" data-aistep="${i}">追加</button>` : ''}</li>`;
   }).join('') : '';
 }
-$('aiSteps').addEventListener('click', e => {
-  const i = e.target.dataset.aistep;
+function renderAi() {
+  const all = (state.aiMessages || []);
+  const unread = all.filter(m => !m.readAt).length;
+  $('openAi').hidden = !all.length;
+  $('openAi').textContent = unread ? `🤖 ${unread}` : '🤖';
+  if ($('aiDialog').open) renderAiHistory();
   const m = currentAi();
-  if (i === undefined || !m) return;
-  const s = m.steps[i];
+  $('aiCard').hidden = !m;
+  if (!m) return;
+  $('aiDate').textContent = aiDateText(m);
+  $('aiBody').textContent = m.body;
+  $('aiSteps').innerHTML = aiStepsHtml(m);
+}
+// これまでに届いた便りを新しい順に並べる（「読んだ」にしたものもここで読み返せる）
+function renderAiHistory() {
+  const list = [...(state.aiMessages || [])].sort((a, b) => b.createdAt - a.createdAt);
+  $('aiHistory').innerHTML = list.map((m, i) => `
+    <details class="ai-past" ${i === 0 ? 'open' : ''}>
+      <summary>${aiDateText(m)}${m.readAt ? '' : ' <span class="ai-new">未読</span>'}</summary>
+      <div class="ai-body"></div>
+      <ul class="list ai-steps">${aiStepsHtml(m)}</ul>
+    </details>`).join('') || '<p class="muted">まだ届いていません。</p>';
+  // 本文は textContent で入れる（Claude の文をそのまま表示するため）
+  $('aiHistory').querySelectorAll('.ai-body').forEach((el, i) => { el.textContent = list[i].body; });
+}
+$('openAi').onclick = () => { renderAiHistory(); $('aiDialog').showModal(); };
+function addAiStep(e) {
+  const { aimsg, aistep } = e.target.dataset;
+  const m = (state.aiMessages || []).find(x => x.id === aimsg);
+  if (aistep === undefined || !m) return;
+  const s = m.steps[aistep];
   const g = { id: uid(), parentId: s.parent_id, title: s.title, deadline: '', done: false, doneAt: null, createdAt: Date.now() };
   state.goals.push(g);
   s.added = true;
   commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }, { t: 'upsert', table: 'ai_messages', row: aiRow(m) }]);
-});
+}
+$('aiSteps').addEventListener('click', addAiStep);
+$('aiHistory').addEventListener('click', addAiStep);
 $('aiRead').onclick = () => {
   const m = currentAi();
   if (!m) return;

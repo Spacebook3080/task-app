@@ -54,8 +54,8 @@
     max-width: 720px; margin: 0 auto;
     padding: calc(20px + env(safe-area-inset-top)) 16px calc(64px + env(safe-area-inset-bottom));
   }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
-  h1 { font-size: 20px; margin: 0; }
+  header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; white-space: nowrap; }
   .sync { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
   .icon-btn {
     background: none; border: 1px solid var(--line); color: var(--text); white-space: nowrap;
@@ -162,6 +162,10 @@
   .ai-steps li { font-size: 14px; }
   .ai-steps .ai-steps-head { font-size: 12px; padding-bottom: 0; }
   .ai-steps small { font-size: 12px; }
+  .ai-past { border-top: 1px solid var(--line); padding: 10px 0; }
+  .ai-past summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+  .ai-past .ai-body { margin-top: 8px; }
+  .ai-new { background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; }
   .ai-steps button { background: var(--accent-soft); color: var(--accent); border: none; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-family: inherit; cursor: pointer; flex: none; }
 
   /* 週の振り返り */
@@ -231,6 +235,7 @@
   <header>
     <h1>📋 毎日のタスク<span class="sync" id="syncStatus"></span></h1>
     <div style="display:flex;gap:6px">
+      <button class="icon-btn" id="openAi" title="Claude からの振り返り" hidden>🤖</button>
       <button class="icon-btn" id="openGoals" title="長期の目標">🎯 目標</button>
       <button class="icon-btn" id="openRoutines" title="毎日の習慣を設定">🔁 習慣</button>
       <button class="icon-btn" id="openData" title="設定・バックアップ">⚙</button>
@@ -332,6 +337,16 @@
   </form>
   <div class="days" id="routineDays"></div>
   <ul class="list" id="routineEditList" style="margin-top:12px"></ul>
+  <div class="dialog-foot">
+    <span></span>
+    <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
+  </div>
+</dialog>
+
+<dialog id="aiDialog" class="wide">
+  <h3>🤖 Claude からの振り返り</h3>
+  <p class="muted" style="margin-top:0">これまでに届いた振り返りです。日付を押すと開きます。</p>
+  <div id="aiHistory"></div>
   <div class="dialog-foot">
     <span></span>
     <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
