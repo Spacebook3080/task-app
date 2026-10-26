@@ -76,7 +76,10 @@
   .stats b { color: var(--text); font-size: 16px; }
 
   form.add { display: flex; flex-wrap: wrap; gap: 8px; }
-  form.add input[type=text] { flex: 1 1 260px; }
+  form.add #newTitle { flex: 1 1 0; min-width: 0; }
+  .add-more { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+  .add-more[hidden] { display: none; }
+  .add-more #newTag { flex: 1 1 140px; min-width: 0; }
   input, select, textarea {
     font: inherit; font-size: 16px; color: var(--text); background: var(--bg);
     border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
@@ -208,10 +211,6 @@
   <div class="switch muted">
     <button id="forgotBtn" type="button">パスワードを忘れた場合</button>
   </div>
-  <div class="switch muted">
-    <span id="authSwitchText">はじめて使う場合は</span>
-    <button id="authSwitch" type="button">新規登録</button>
-  </div>
 </div>
 
 <dialog id="pwDialog">
@@ -253,19 +252,27 @@
     <div class="progress"><div id="bar"></div></div>
   </div>
 
+  <div class="card" id="goalCard" hidden>
+    <h2>🎯 目標</h2>
+    <ul class="list goal-summary" id="goalSummary"></ul>
+  </div>
+
   <div class="card">
     <form class="add" id="addForm">
-      <input type="text" id="newTitle" placeholder="やることを入力して Enter" autocomplete="off" enterkeyhint="done" required>
-      <select id="newPri" title="優先度">
-        <option value="high">優先度 高</option>
-        <option value="mid" selected>優先度 中</option>
-        <option value="low">優先度 低</option>
-      </select>
-      <input type="time" id="newTime" title="時間（任意）">
-      <input type="text" id="newTag" placeholder="カテゴリ（任意）" list="tagList" style="flex:0 1 140px">
-      <datalist id="tagList"></datalist>
-      <label class="due-field" title="締切（任意）">⏰ 締切 <input type="datetime-local" id="newDue"></label>
+      <input type="text" id="newTitle" placeholder="やることを入力" autocomplete="off" enterkeyhint="done" required>
+      <button class="icon-btn" type="button" id="addMore" aria-expanded="false">詳しく ▾</button>
       <button class="primary" type="submit">追加</button>
+      <div class="add-more" id="addMoreBox" hidden>
+        <select id="newPri" title="優先度">
+          <option value="high">優先度 高</option>
+          <option value="mid" selected>優先度 中</option>
+          <option value="low">優先度 低</option>
+        </select>
+        <input type="time" id="newTime" title="時間（任意）">
+        <input type="text" id="newTag" placeholder="カテゴリ（任意）" list="tagList">
+        <datalist id="tagList"></datalist>
+        <label class="due-field" title="締切（任意）">⏰ 締切 <input type="datetime-local" id="newDue"></label>
+      </div>
     </form>
   </div>
 
@@ -291,11 +298,6 @@
       </span>
     </h2>
     <ul class="list" id="taskList"></ul>
-  </div>
-
-  <div class="card" id="goalCard" hidden>
-    <h2>🎯 目標</h2>
-    <ul class="list goal-summary" id="goalSummary"></ul>
   </div>
 
   <div class="card" id="reviewCard" hidden>

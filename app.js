@@ -605,11 +605,21 @@ $('addForm').addEventListener('submit', e => {
   };
   state.tasks.push(t);
   $('newTitle').value = '';
+  $('newPri').value = 'mid';
   $('newTime').value = '';
+  $('newTag').value = '';
   $('newDue').value = '';
+  setAddMore(false);
   commit([{ t: 'upsert', table: 'tasks', row: taskRow(t) }]);
   $('newTitle').focus();
 });
+// 優先度・時間・カテゴリ・締切は「詳しく」を押したときだけ出す
+function setAddMore(open) {
+  $('addMoreBox').hidden = !open;
+  $('addMore').setAttribute('aria-expanded', open);
+  $('addMore').textContent = open ? '閉じる ▴' : '詳しく ▾';
+}
+$('addMore').onclick = () => setAddMore($('addMoreBox').hidden);
 
 $('routineList').addEventListener('change', e => {
   const id = e.target.dataset.routine;
@@ -1185,44 +1195,24 @@ $('notifyTest').onclick = async () => {
 };
 
 // ---------- ログイン ----------
-let authMode = 'login';
-function setAuthMode(mode) {
-  authMode = mode;
-  $('authSubmit').textContent = mode === 'login' ? 'ログイン' : '新規登録';
-  $('authSwitchText').textContent = mode === 'login' ? 'はじめて使う場合は' : 'アカウントがある場合は';
-  $('authSwitch').textContent = mode === 'login' ? '新規登録' : 'ログイン';
-  $('authPass').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-  authMsg('');
-}
+// 新規登録は Supabase 側で止めてあるので、ログインだけ
 function authMsg(text, isErr) {
   $('authMsg').textContent = text;
   $('authMsg').className = isErr ? 'err' : 'muted';
 }
-$('authSwitch').onclick = () => setAuthMode(authMode === 'login' ? 'signup' : 'login');
 $('authForm').addEventListener('submit', async e => {
   e.preventDefault();
   const email = $('authEmail').value.trim(), password = $('authPass').value;
   $('authSubmit').disabled = true;
   authMsg('通信中…');
   try {
-    if (authMode === 'signup') {
-      const opts = location.protocol.startsWith('http') ? { emailRedirectTo: location.origin + location.pathname } : {};
-      const { data, error } = await sb.auth.signUp({ email, password, options: opts });
-      if (error) throw error;
-      if (!data.session) {
-        setAuthMode('login');
-        authMsg('確認メールを送りました。メールのリンクを押してから、ここでログインしてください。');
-      }
-    } else {
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-    }
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw error;
   } catch (err) {
     const m = err.message || '';
     authMsg(
       /Invalid login/i.test(m) ? 'メールアドレスかパスワードが違います' :
       /not confirmed/i.test(m) ? 'メールの確認がまだです。届いたメールのリンクを押してください' :
-      /already registered/i.test(m) ? 'このメールアドレスは登録済みです。ログインしてください' :
       /rate limit/i.test(m) ? '試行回数が多すぎます。少し時間をおいてください' :
       'エラー：' + m, true);
   } finally {
@@ -1269,7 +1259,7 @@ $('pwForm').addEventListener('submit', async e => {
 
 // ---------- 起動 ----------
 function showApp() { $('auth').hidden = true; $('app').hidden = false; render(); }
-function showAuth() { $('app').hidden = true; $('auth').hidden = false; setAuthMode('login'); }
+function showAuth() { $('app').hidden = true; $('auth').hidden = false; authMsg(''); }
 
 async function enterApp() {
   const cache = lsGet(KEY_CACHE);
