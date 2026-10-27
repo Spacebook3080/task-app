@@ -549,7 +549,7 @@ $('reviewForm').addEventListener('submit', e => {
 });
 $('reviewAi').onclick = () => {
   openClaude(reviewPrompt()).then(ok => {
-    $('reviewMsg').textContent = ok ? '相談文をコピーして Claude を開きました。入っていなければ貼ってください' : 'コピーできませんでした';
+    $('reviewMsg').textContent = ok ? '相談文をコピーして Claude を開きました。入力欄に貼ってください' : 'コピーできませんでした';
   });
 };
 $('reviewDay').innerHTML = WEEK.map((w, i) => `<option value="${i}">${w}曜日</option>`).join('');
@@ -884,12 +884,12 @@ function stepPrompt(g) {
   ].join('\n');
 }
 // 依頼文をコピーして、Claude Code の画面を開く。
-// q= で入力欄に文章が入るかは試し中。入らなくてもコピー済みなので貼ればよい
+// Claude Code はリンクで入力欄に文章を入れられない（2026-10-28 に iPhone で確認）ので貼ってもらう
 const CLAUDE_URL = 'https://claude.ai/code';
 function openClaude(text) {
   const copying = copyText(text);
   // iPhone では、押した直後に開かないと止められるので待たずに開く
-  window.open(`${CLAUDE_URL}?q=${encodeURIComponent(text)}`, '_blank');
+  window.open(CLAUDE_URL, '_blank');
   return copying;
 }
 async function copyText(text) {
@@ -1040,7 +1040,7 @@ goalTree.addEventListener('click', e => {
     renderGoalTree();
     openClaude(stepPrompt(g)).then(ok => {
       pasteNote = ok
-        ? '依頼文をコピーして Claude を開きました（入っていなければ貼ってください）。相談して、最後に出てきた箇条書きをここに貼ってください。'
+        ? '依頼文をコピーして Claude を開きました。入力欄に貼って相談し、最後に出てきた箇条書きをここに貼ってください。'
         : 'コピーできませんでした。下の依頼文を選んでコピーし、Claude の返事が来たら書きかえてください。';
       if (!ok) pasteText = stepPrompt(g);
       renderGoalTree();
