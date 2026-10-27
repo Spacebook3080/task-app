@@ -548,8 +548,8 @@ $('reviewForm').addEventListener('submit', e => {
   $('reviewMsg').textContent = '保存しました（その日のメモにも入ります）';
 });
 $('reviewAi').onclick = () => {
-  copyText(reviewPrompt()).then(ok => {
-    $('reviewMsg').textContent = ok ? '相談文をコピーしました。Claude アプリに貼ってください' : 'コピーできませんでした';
+  openClaude(reviewPrompt()).then(ok => {
+    $('reviewMsg').textContent = ok ? '相談文をコピーして Claude を開きました。入っていなければ貼ってください' : 'コピーできませんでした';
   });
 };
 $('reviewDay').innerHTML = WEEK.map((w, i) => `<option value="${i}">${w}曜日</option>`).join('');
@@ -883,6 +883,15 @@ function stepPrompt(g) {
     '- 決まったら、最後に「- 」で始まる箇条書きだけで一覧を出してください。グループに分けるときは半角スペース 2 つで字下げしてください',
   ].join('\n');
 }
+// 依頼文をコピーして、Claude Code の画面を開く。
+// q= で入力欄に文章が入るかは試し中。入らなくてもコピー済みなので貼ればよい
+const CLAUDE_URL = 'https://claude.ai/code';
+function openClaude(text) {
+  const copying = copyText(text);
+  // iPhone では、押した直後に開かないと止められるので待たずに開く
+  window.open(`${CLAUDE_URL}?q=${encodeURIComponent(text)}`, '_blank');
+  return copying;
+}
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
   const ta = document.createElement('textarea');
@@ -1029,9 +1038,9 @@ goalTree.addEventListener('click', e => {
     pastingUnder = d.gai; pasteText = '';
     pasteNote = '依頼文をコピーしています…';
     renderGoalTree();
-    copyText(stepPrompt(g)).then(ok => {
+    openClaude(stepPrompt(g)).then(ok => {
       pasteNote = ok
-        ? '依頼文をコピーしました。Claude アプリに貼って相談し、最後に出てきた箇条書きをここに貼ってください。'
+        ? '依頼文をコピーして Claude を開きました（入っていなければ貼ってください）。相談して、最後に出てきた箇条書きをここに貼ってください。'
         : 'コピーできませんでした。下の依頼文を選んでコピーし、Claude の返事が来たら書きかえてください。';
       if (!ok) pasteText = stepPrompt(g);
       renderGoalTree();
