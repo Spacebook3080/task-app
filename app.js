@@ -177,6 +177,7 @@ async function pull() {
     saveCache();
     render();
     setSync('ok');
+    syncCalendar();
   } catch (e) {
     console.warn(e);
     setSync(navigator.onLine ? 'error' : 'offline');
@@ -1080,6 +1081,7 @@ $('openData').onclick = () => {
   $('logoutBtn').hidden = $('changePwBtn').hidden = !session;
   $('dataDialog').showModal();
   loadNotify();
+  loadCalendar();
   loadAiToken();
 };
 $('exportBtn').onclick = () => {
@@ -1105,6 +1107,126 @@ $('importFile').addEventListener('change', async e => {
 $('logoutBtn').onclick = async () => {
   if (queue.length && !confirm('まだ送れていない変更があります。ログアウトすると消えますが、よろしいですか？')) return;
   await sb.auth.signOut();
+};
+
+// ---------- Google カレンダーの取り込み ----------
+// iCal は Edge Function「calendar」が代わりに読む。予定 → タスクはこの端末で行い、
+// calendar_imports に「もう入れた予定」を記録して、二重に入れたり消したタスクを戻したりしないようにする
+const ICAL_LIB = 'https://cdn.jsdelivr.net/npm/ical.js@1.5.0/build/ical.min.js';
+const CAL_DAYS = 7;              // 今日から何日分を取り込むか
+const CAL_INTERVAL = 10 * 60000; // 取り込みの間隔
+let calSyncedAt = 0;
+let calSyncing = false;
+
+function calMsg(text) { $('calMsg').textContent = text; }
+function loadScript(src) {
+  return new Promise((ok, ng) => {
+    if (document.querySelector(`script[src="${src}"]`)) return ok();
+    const s = document.createElement('script');
+    s.src = src; s.onload = ok; s.onerror = () => ng(new Error('部品を読み込めませんでした'));
+    document.head.appendChild(s);
+  });
+}
+function icalDate(t) {
+  return t.isDate ? `${t.year}-${String(t.month).padStart(2, '0')}-${String(t.day).padStart(2, '0')}` : fmt(t.toJSDate());
+}
+
+// iCal の中から from〜to の日の予定を取り出す（繰り返しの予定・その回だけ変えた予定・取り消しにも対応）
+function calendarEvents(ics, from, to) {
+  const root = new ICAL.Component(ICAL.parse(ics));
+  root.getAllSubcomponents('vtimezone').forEach(tz => ICAL.TimezoneService.register(tz));
+  const masters = {}, exceptions = [];
+  root.getAllSubcomponents('vevent').forEach(v => {
+    const ev = new ICAL.Event(v);
+    if (ev.isRecurrenceException()) exceptions.push(ev); else masters[ev.uid] = ev;
+  });
+  exceptions.forEach(ex => masters[ex.uid] ? masters[ex.uid].relateException(ex) : (masters[ex.uid + ex.recurrenceId] = ex));
+
+  const out = [];
+  const add = (item, start, key) => {
+    const date = icalDate(start);
+    if (date < from || date > to || item.component.getFirstPropertyValue('status') === 'CANCELLED') return;
+    out.push({ key, date, title: item.summary || '（無題の予定）', time: start.isDate ? '' : hm(start.toJSDate()) });
+  };
+  for (const ev of Object.values(masters)) {
+    if (!ev.isRecurring()) { add(ev, ev.startDate, ev.uid); continue; }
+    const it = ev.iterator();
+    for (let next, n = 0; (next = it.next()) && n < 20000; n++) {
+      if (icalDate(next) > shift(to, 1)) break;
+      const d = ev.getOccurrenceDetails(next);
+      add(d.item, d.startDate, ev.uid + '|' + next.toString());
+    }
+  }
+  return out;
+}
+
+async function syncCalendar(force) {
+  if (!sb || !session || calSyncing || (!force && Date.now() - calSyncedAt < CAL_INTERVAL)) return;
+  calSyncing = true;
+  calSyncedAt = Date.now();
+  try {
+    const { data, error } = await sb.functions.invoke('calendar', { body: {} });
+    if (error) throw error;
+    if (data.error) throw new Error(data.error);
+    if (!data.ics) return 0;
+    await loadScript(ICAL_LIB);
+    const today = todayStr();
+    const events = calendarEvents(data.ics, today, shift(today, CAL_DAYS - 1));
+    if (!events.length) return 0;
+    // まだ記録のない予定だけが返ってくる（ほかの端末が先に入れた予定は返ってこない）
+    const res = await sb.from('calendar_imports')
+      .upsert(events.map(e => ({ user_id: userId(), key: e.key })), { onConflict: 'user_id,key', ignoreDuplicates: true })
+      .select('key');
+    if (res.error) throw res.error;
+    const fresh = new Set(res.data.map(r => r.key));
+    const tasks = events.filter(e => fresh.has(e.key)).map(e => ({
+      id: uid(), title: e.title, date: e.date, time: e.time, priority: 'mid', tag: '📅',
+      due: '', goalId: null, done: false, doneAt: null, createdAt: Date.now()
+    }));
+    if (tasks.length) {
+      state.tasks.push(...tasks);
+      commit([{ t: 'upsert', table: 'tasks', row: tasks.map(taskRow) }]);
+    }
+    return tasks.length;
+  } catch (e) {
+    console.warn('カレンダーを取り込めませんでした', e);
+    if (force) throw e;
+  } finally {
+    calSyncing = false;
+  }
+}
+
+async function loadCalendar() {
+  $('calBox').hidden = !session;
+  if (!session) return;
+  const { data, error } = await sb.from('calendar_settings').select('ical_url').maybeSingle();
+  if (error) { calMsg('まだ準備ができていません（Supabase で SQL を実行してください）。'); return; }
+  $('calUrl').value = data ? data.ical_url : '';
+  $('calRemove').hidden = !data;
+  calMsg(data ? 'つながっています。アプリを開いたときと 10 分ごとに予定を取り込みます。'
+    : 'Google カレンダーの設定にある「非公開の iCal 形式のアドレス」を貼ってください。');
+}
+$('calSave').onclick = async () => {
+  const url = $('calUrl').value.trim();
+  if (!/^https:\/\/calendar\.google\.com\/.+\.ics$/.test(url)) { calMsg('「https://calendar.google.com/」で始まり「.ics」で終わるアドレスを貼ってください。'); return; }
+  $('calSave').disabled = true;
+  calMsg('読み込み中…');
+  try {
+    const { error } = await sb.from('calendar_settings').upsert({ user_id: userId(), ical_url: url, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    const n = await syncCalendar(true);
+    await loadCalendar();
+    calMsg(`つながりました。${n ? `予定を ${n} 件タスクに入れました。` : '新しく入れる予定はありませんでした。'}`);
+  } catch (err) {
+    calMsg('エラー：' + (err.message || err));
+  } finally {
+    $('calSave').disabled = false;
+  }
+};
+$('calRemove').onclick = async () => {
+  if (!confirm('Google カレンダーとつなぐのをやめますか？\n（もう入ったタスクはそのまま残ります）')) return;
+  const { error } = await sb.from('calendar_settings').delete().eq('user_id', userId());
+  if (error) calMsg('エラー：' + error.message); else loadCalendar();
 };
 
 // ---------- Claude 用の合言葉 ----------

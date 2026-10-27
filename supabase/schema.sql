@@ -157,6 +157,33 @@ drop policy if exists "own ai_messages" on public.ai_messages;
 create policy "own ai_messages" on public.ai_messages
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+-- ---------- Google カレンダーの取り込み（Edge Function「calendar」が iCal を読む） ----------
+-- 非公開の iCal アドレス（これを知っている人は予定を読めるので、本人だけが読み書きできる）
+create table if not exists public.calendar_settings (
+  user_id     uuid primary key default auth.uid() references auth.users on delete cascade,
+  ical_url    text not null,
+  updated_at  timestamptz not null default now()
+);
+
+-- もうタスクにした予定（key は「予定の UID|繰り返しの回」）。タスクを消しても二度と入らないように残す
+create table if not exists public.calendar_imports (
+  user_id     uuid not null default auth.uid() references auth.users on delete cascade,
+  key         text not null,
+  created_at  timestamptz not null default now(),
+  primary key (user_id, key)
+);
+
+alter table public.calendar_settings enable row level security;
+alter table public.calendar_imports  enable row level security;
+
+drop policy if exists "own calendar_settings" on public.calendar_settings;
+create policy "own calendar_settings" on public.calendar_settings
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own calendar_imports" on public.calendar_imports;
+create policy "own calendar_imports" on public.calendar_imports
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
 -- 5 分ごとに Edge Function「push」を呼ぶ（送る時刻かどうかは関数の中で判断する）
 create extension if not exists pg_cron with schema pg_catalog;
 create extension if not exists pg_net with schema extensions;
