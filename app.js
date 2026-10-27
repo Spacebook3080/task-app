@@ -1161,14 +1161,18 @@ async function loadNotify() {
     notifyMsg(isIOS ? 'iPhone では、ホーム画面に追加したアプリから開くと通知をオンにできます。' : 'このブラウザは通知に対応していません。');
     return;
   }
-  const { data } = await sb.from('notify_settings').select('morning_time').maybeSingle();
-  if (data) $('notifyTime').value = data.morning_time;
+  const { data } = await sb.from('notify_settings').select('morning_time,remind_times').maybeSingle();
+  if (data) {
+    $('notifyTime').value = data.morning_time;
+    $('notifyRemind').checked = (data.remind_times || []).length > 0;
+  }
   const reg = await navigator.serviceWorker.getRegistration();
   pushSub = reg ? await reg.pushManager.getSubscription() : null;
   $('notifyToggle').textContent = pushSub ? 'この端末の通知をオフにする' : 'この端末で通知をオンにする';
   $('notifyTest').hidden = !pushSub;
+  const remind = $('notifyRemind').checked ? '12:00 と 18:00 には終わっていないタスクも' : '';
   notifyMsg(pushSub
-    ? `この端末に、毎朝 ${$('notifyTime').value} ごろ今日の予定が届きます。`
+    ? `この端末に、毎朝 ${$('notifyTime').value} ごろ今日の予定が届きます。${remind && remind + '届きます。'}`
     : 'オンにすると、毎朝決めた時刻に今日のタスクと習慣が届きます。');
   // iPhone では許可を求めたあとすぐ登録しないと失敗することがあるので、鍵は先にもらっておく
   if (!pushSub && !vapidKey) {
@@ -1179,12 +1183,13 @@ async function loadNotify() {
 function saveNotifyTime() {
   return sb.from('notify_settings').upsert({
     user_id: userId(), morning_time: $('notifyTime').value || '07:00',
+    remind_times: $('notifyRemind').checked ? ['12:00', '18:00'] : [],
     tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo'
   });
 }
-$('notifyTime').addEventListener('change', async () => {
+for (const id of ['notifyTime', 'notifyRemind']) $(id).addEventListener('change', async () => {
   const { error } = await saveNotifyTime();
-  if (error) notifyMsg('時刻を保存できませんでした：' + error.message);
+  if (error) notifyMsg('設定を保存できませんでした：' + error.message);
   else loadNotify();
 });
 $('notifyToggle').onclick = async () => {

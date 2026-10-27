@@ -102,6 +102,10 @@ create table if not exists public.notify_settings (
   last_sent     date
 );
 
+-- 昼・夕方に「まだ終わっていないタスク」を知らせる時刻（空ならオフ）。remind_sent は最後に送った回（例 2026-10-27T12:00）
+alter table public.notify_settings add column if not exists remind_times text[] not null default '{12:00,18:00}';
+alter table public.notify_settings add column if not exists remind_sent  text;
+
 -- 通知を送るための鍵（Edge Function が初回に自動で作る）。
 -- ポリシーを作らないので、アプリからは読めず Edge Function（service_role）だけが使える
 create table if not exists public.push_keys (

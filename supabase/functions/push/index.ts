@@ -1,11 +1,12 @@
-// 毎朝のまとめを Web Push で送る Supabase Edge Function「push」
+// 毎朝のまとめと、昼・夕方の「まだ終わっていないタスク」を Web Push で送る Supabase Edge Function「push」
 // Supabase の画面（Edge Functions → Deploy a new function → Via Editor）で、名前を push にしてこのファイルを貼り付ける。
 // 「Verify JWT」はオフにする（5 分ごとに呼ぶ pg_cron がログインせずに呼ぶため）。
 //
 // 受け付ける呼び出し（POST の JSON）:
 //   { action: 'key' }  … 通知の登録に使う公開鍵を返す（鍵がなければ作る）
 //   { action: 'test' } … ログイン中の本人の端末に、今すぐまとめを送る
-//   { action: 'cron' } … 各ユーザーの決めた時刻になっていれば、その日のまとめを 1 回だけ送る
+//   { action: 'cron' } … 各ユーザーの決めた時刻になっていれば、その日のまとめを 1 回だけ送る。
+//                        remind_times の各時刻にも、終わっていないタスクがあれば 1 回ずつ送る
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import webpush from 'npm:web-push@3.6.7';
 
@@ -13,6 +14,7 @@ const APP_URL = 'https://spacebook3080.github.io/task-app/';
 const PRI_ORDER: Record<string, number> = { high: 0, mid: 1, low: 2 };
 const WEEK_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const LATE_LIMIT = 120; // 決めた時刻から何分過ぎるまでなら送るか（それ以降はその日は送らない）
+const REMIND_LIMIT = 60; // 昼・夕方の通知は、その時刻から何分過ぎるまでなら送るか
 
 const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 const cors = {
@@ -47,24 +49,42 @@ async function loadVapid() {
   return data!.public_key as string;
 }
 
-// 今日のまとめの文面（未完了のタスク＝今日の分と持ち越し、今日の曜日の習慣）
-async function summary(userId: string, now: ReturnType<typeof localNow>) {
-  const [tasksRes, routinesRes] = await Promise.all([
+// 今日の未完了のタスク（今日の分と持ち越し）と、今日の曜日の習慣（済んだものも含む）
+async function today(userId: string, now: ReturnType<typeof localNow>) {
+  const [tasksRes, routinesRes, logsRes] = await Promise.all([
     admin.from('tasks').select('title,date,time,priority,created_at').eq('user_id', userId).eq('done', false).lte('date', now.date),
-    admin.from('routines').select('title,days').eq('user_id', userId)
+    admin.from('routines').select('id,title,days').eq('user_id', userId),
+    admin.from('routine_logs').select('routine_id').eq('user_id', userId).eq('date', now.date)
   ]);
   const tasks = (tasksRes.data ?? []).sort((a, b) =>
     (PRI_ORDER[a.priority] - PRI_ORDER[b.priority]) ||
     (a.time || '99').localeCompare(b.time || '99') ||
     a.created_at.localeCompare(b.created_at));
-  const carried = tasks.filter(t => t.date < now.date).length;
   const habits = (routinesRes.data ?? []).filter(r => (r.days ?? []).includes(now.wd));
+  const doneIds = new Set((logsRes.data ?? []).map(l => l.routine_id));
+  return { tasks, habits, habitsLeft: habits.filter(h => !doneIds.has(h.id)) };
+}
 
-  if (!tasks.length && !habits.length) return '今日の予定はまだありません。やることを書き出してみましょう。';
-  const lines = [`タスク ${tasks.length}件${carried ? `（持ち越し ${carried}件）` : ''}・習慣 ${habits.length}件`];
-  for (const t of tasks.slice(0, 4)) lines.push(`・${t.time ? t.time + ' ' : ''}${t.title}`);
+function taskLines(tasks: { title: string; time: string | null }[]) {
+  const lines = tasks.slice(0, 4).map(t => `・${t.time ? t.time + ' ' : ''}${t.title}`);
   if (tasks.length > 4) lines.push(`ほか ${tasks.length - 4}件`);
-  return lines.join('\n');
+  return lines;
+}
+
+// 朝のまとめの文面
+async function summary(userId: string, now: ReturnType<typeof localNow>) {
+  const { tasks, habits } = await today(userId, now);
+  if (!tasks.length && !habits.length) return '今日の予定はまだありません。やることを書き出してみましょう。';
+  const carried = tasks.filter(t => t.date < now.date).length;
+  return [`タスク ${tasks.length}件${carried ? `（持ち越し ${carried}件）` : ''}・習慣 ${habits.length}件`, ...taskLines(tasks)].join('\n');
+}
+
+// 昼・夕方の「まだ終わっていない」の文面。全部終わっていたら null（送らない）
+async function reminder(userId: string, now: ReturnType<typeof localNow>) {
+  const { tasks, habitsLeft } = await today(userId, now);
+  if (!tasks.length && !habitsLeft.length) return null;
+  const head = [tasks.length && `タスク ${tasks.length}件`, habitsLeft.length && `習慣 ${habitsLeft.length}件`].filter(Boolean).join('・');
+  return [`まだ終わっていません：${head}`, ...taskLines(tasks)].join('\n');
 }
 
 // その人の登録済みの端末すべてに送る。もう使われていない登録は消す
@@ -105,18 +125,33 @@ Deno.serve(async req => {
     }
 
     // cron：決めた時刻を過ぎていて、今日まだ送っていない人に送る
-    const { data: rows } = await admin.from('notify_settings').select('user_id,morning_time,tz,last_sent');
+    const { data: rows } = await admin.from('notify_settings').select('user_id,morning_time,tz,last_sent,remind_times,remind_sent');
     let users = 0;
     for (const r of rows ?? []) {
       const now = localNow(r.tz || 'Asia/Tokyo');
       const late = toMin(now.time) - toMin(r.morning_time);
-      if (late < 0 || late > LATE_LIMIT || r.last_sent === now.date) continue;
-      // 先に「今日は送った」と書いておき、同時に呼ばれても二重に送らないようにする
-      const { data: claimed } = await admin.from('notify_settings').update({ last_sent: now.date })
-        .eq('user_id', r.user_id).or(`last_sent.is.null,last_sent.neq.${now.date}`).select('user_id');
+      if (late >= 0 && late <= LATE_LIMIT && r.last_sent !== now.date) {
+        // 先に「今日は送った」と書いておき、同時に呼ばれても二重に送らないようにする
+        const { data: claimed } = await admin.from('notify_settings').update({ last_sent: now.date })
+          .eq('user_id', r.user_id).or(`last_sent.is.null,last_sent.neq.${now.date}`).select('user_id');
+        if (claimed?.length) {
+          await send(r.user_id, '☀ おはようございます', await summary(r.user_id, now));
+          users++;
+        }
+      }
+
+      // 昼・夕方：その時刻から REMIND_LIMIT 分以内で、まだその回を送っていなければ送る
+      const slot = (r.remind_times ?? []).filter((t: string) => {
+        const d = toMin(now.time) - toMin(t);
+        return d >= 0 && d <= REMIND_LIMIT;
+      }).sort().pop();
+      const key = slot && `${now.date}T${slot}`;
+      if (!key || r.remind_sent === key) continue;
+      const { data: claimed } = await admin.from('notify_settings').update({ remind_sent: key })
+        .eq('user_id', r.user_id).or(`remind_sent.is.null,remind_sent.neq."${key}"`).select('user_id');
       if (!claimed?.length) continue;
-      await send(r.user_id, '☀ おはようございます', await summary(r.user_id, now));
-      users++;
+      const body = await reminder(r.user_id, now);
+      if (body) { await send(r.user_id, `⏰ ${slot} のチェック`, body); users++; }
     }
     return json({ users });
   } catch (e) {
