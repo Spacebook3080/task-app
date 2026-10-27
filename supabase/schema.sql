@@ -172,6 +172,12 @@ create table if not exists public.calendar_imports (
   created_at  timestamptz not null default now(),
   primary key (user_id, key)
 );
+-- どのタスクにしたかと、最後に見たときの予定の中身（カレンダー側の変更・削除をタスクに反映するため）
+alter table public.calendar_imports add column if not exists task_id text;
+alter table public.calendar_imports add column if not exists title   text;
+alter table public.calendar_imports add column if not exists date    date;
+alter table public.calendar_imports add column if not exists time    text;
+alter table public.calendar_imports add column if not exists gone    boolean not null default false;
 
 alter table public.calendar_settings enable row level security;
 alter table public.calendar_imports  enable row level security;

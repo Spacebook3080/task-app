@@ -1151,7 +1151,7 @@ function calendarEvents(ics, from, to) {
   for (const ev of Object.values(masters)) {
     if (!ev.isRecurring()) { add(ev, ev.startDate, ev.uid); continue; }
     const it = ev.iterator();
-    for (let next, n = 0; (next = it.next()) && n < 20000; n++) {
+    for (let next, n = 0; (next = it.next()) && n < 100000; n++) {
       if (icalDate(next) > shift(to, 1)) break;
       const d = ev.getOccurrenceDetails(next);
       add(d.item, d.startDate, ev.uid + '|' + next.toString());
@@ -1169,25 +1169,69 @@ async function syncCalendar(force) {
     if (error) throw error;
     if (data.error) throw new Error(data.error);
     if (!data.ics) return 0;
+    if (!/^BEGIN:VCALENDAR/.test(data.ics.trim())) throw new Error('カレンダーの中身を読めませんでした');
     await loadScript(ICAL_LIB);
-    const today = todayStr();
-    const events = calendarEvents(data.ics, today, shift(today, CAL_DAYS - 1));
-    if (!events.length) return 0;
-    // まだ記録のない予定だけが返ってくる（ほかの端末が先に入れた予定は返ってこない）
-    const res = await sb.from('calendar_imports')
-      .upsert(events.map(e => ({ user_id: userId(), key: e.key })), { onConflict: 'user_id,key', ignoreDuplicates: true })
-      .select('key');
-    if (res.error) throw res.error;
-    const fresh = new Set(res.data.map(r => r.key));
-    const tasks = events.filter(e => fresh.has(e.key)).map(e => ({
-      id: uid(), title: e.title, date: e.date, time: e.time, priority: 'mid', tag: '📅',
-      due: '', goalId: null, done: false, doneAt: null, createdAt: Date.now()
-    }));
-    if (tasks.length) {
+    const today = todayStr(), last = shift(today, CAL_DAYS - 1);
+    // 変更・削除を見分けるため、取り込む範囲より広く読んでおく（遠くへ動かした予定を「消えた」と思わないように）
+    const events = calendarEvents(data.ics, shift(today, -31), shift(today, 400));
+    const byKey = new Map(events.map(e => [e.key, e]));
+    const { data: rows, error: rowsErr } = await sb.from('calendar_imports').select('key,task_id,title,date,time,gone');
+    if (rowsErr) throw rowsErr;
+    const known = new Set(rows.map(r => r.key));
+    const snap = (e, taskId) => ({ user_id: userId(), key: e.key, task_id: taskId, title: e.title, date: e.date, time: e.time, gone: false });
+    const ops = [], rowUpdates = [];
+    let added = 0;
+
+    // 新しい予定 → タスクにする。記録のない予定だけが返ってくる（ほかの端末が先に入れた予定は返ってこない）
+    const fresh = events.filter(e => e.date >= today && e.date <= last && !known.has(e.key)).map(e => ({ e, id: uid() }));
+    if (fresh.length) {
+      const res = await sb.from('calendar_imports')
+        .upsert(fresh.map(f => snap(f.e, f.id)), { onConflict: 'user_id,key', ignoreDuplicates: true })
+        .select('key');
+      if (res.error) throw res.error;
+      const ok = new Set(res.data.map(r => r.key));
+      const tasks = fresh.filter(f => ok.has(f.e.key)).map(f => ({
+        id: f.id, title: f.e.title, date: f.e.date, time: f.e.time, priority: 'mid', tag: '📅',
+        due: '', goalId: null, done: false, doneAt: null, createdAt: Date.now()
+      }));
       state.tasks.push(...tasks);
-      commit([{ t: 'upsert', table: 'tasks', row: tasks.map(taskRow) }]);
+      if (tasks.length) ops.push({ t: 'upsert', table: 'tasks', row: tasks.map(taskRow) });
+      added = tasks.length;
     }
-    return tasks.length;
+
+    // 前に入れた予定 → カレンダー側で変わっていたらタスクも直し、消えていたらタスクも消す（完了済みは触らない）
+    const linked = new Set(rows.map(r => r.task_id).filter(Boolean));
+    for (const r of rows) {
+      const e = byKey.get(r.key);
+      if (!r.task_id) {
+        // 記録を始める前に入れた予定：同じ名前・日時の 📅 タスクを探してつなぐ（もう無い予定は追わない）
+        if (!e) { if (!r.gone) rowUpdates.push({ ...r, user_id: userId(), gone: true }); continue; }
+        const t = state.tasks.find(t => t.tag === '📅' && !linked.has(t.id) && t.title === e.title && t.date === e.date && (t.time || '') === e.time);
+        if (t) linked.add(t.id);
+        rowUpdates.push(snap(e, t ? t.id : null));
+        continue;
+      }
+      const t = state.tasks.find(t => t.id === r.task_id);
+      if (e && (r.gone || r.title !== e.title || r.date !== e.date || (r.time || '') !== e.time)) {
+        if (t && !t.done) {
+          Object.assign(t, { title: e.title, date: e.date, time: e.time });
+          ops.push({ t: 'upsert', table: 'tasks', row: taskRow(t) });
+        }
+        rowUpdates.push(snap(e, r.task_id));
+      } else if (!e && events.length && !r.gone && r.date >= today) {
+        if (t && !t.done) {
+          state.tasks = state.tasks.filter(x => x !== t);
+          ops.push({ t: 'delete', table: 'tasks', match: { id: t.id } });
+        }
+        rowUpdates.push({ ...r, user_id: userId(), gone: true });
+      }
+    }
+    if (rowUpdates.length) {
+      const res = await sb.from('calendar_imports').upsert(rowUpdates, { onConflict: 'user_id,key' });
+      if (res.error) throw res.error;
+    }
+    if (ops.length) commit(ops);
+    return added;
   } catch (e) {
     console.warn('カレンダーを取り込めませんでした', e);
     if (force) throw e;
