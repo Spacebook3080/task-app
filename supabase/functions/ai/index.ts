@@ -2,9 +2,11 @@
 // Supabase の画面（Edge Functions → Deploy a new function → Via Editor）で、名前を ai にしてこのファイルを貼り付ける。
 // 「Verify JWT」はオフにする（Claude はログインせず、アプリで作った合言葉で呼ぶため）。
 //
-// 合言葉は「Authorization: Bearer <合言葉>」で受け取る。できることは次の 2 つだけ:
+// 合言葉は「Authorization: Bearer <合言葉>」で受け取る。できることは次の 3 つだけ:
 //   { action: 'week' } … 今日までの 7 日間の記録（目標・終えたタスク・習慣・メモ）を返す
 //   { action: 'post', body, steps, period_end } … 振り返りの文とステップ案を「Claude から」の便りとして保存し、通知する
+//   { action: 'task', title, tag, dedupe } … 今日のタスクを 1 つ追加する（復習カードのお知らせ用）。
+//       dedupe を付けると、今日すでに dedupe で始まる名前のタスクがあれば追加しない（二重登録を防ぐ）
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import webpush from 'npm:web-push@3.6.7';
 
@@ -118,7 +120,26 @@ Deno.serve(async req => {
       return json({ ok: true, id: row.id, steps_saved: steps.length, steps_ignored: raw.length - steps.length, notified: sent });
     }
 
-    return json({ error: 'action は week か post にしてください' }, 400);
+    // 今日のタスクを 1 つ追加する。通知はアプリの朝・昼・夕方の通知にまかせる
+    if (input.action === 'task') {
+      const title = String(input.title || '').trim().slice(0, 200);
+      if (!title) return json({ error: 'title（タスクの名前）が空です' }, 400);
+      const tag = String(input.tag || '').trim().slice(0, 16) || null;
+      const { data: set } = await admin.from('notify_settings').select('tz').eq('user_id', userId).maybeSingle();
+      const date = localToday(set?.tz || 'Asia/Tokyo');
+      const dedupe = String(input.dedupe || '').trim();
+      if (dedupe) {
+        const { data: same } = await admin.from('tasks').select('id,title').eq('user_id', userId).eq('date', date);
+        const hit = (same ?? []).find(t => String(t.title).startsWith(dedupe));
+        if (hit) return json({ ok: true, skipped: true, reason: '今日はもう追加済み', id: hit.id, date });
+      }
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      const { error } = await admin.from('tasks').insert({ id, user_id: userId, title, date, priority: 'mid', tag });
+      if (error) throw error;
+      return json({ ok: true, id, date });
+    }
+
+    return json({ error: 'action は week・post・task のどれかにしてください' }, 400);
   } catch (e) {
     console.error(e);
     return json({ error: String((e as Error).message || e) }, 500);
