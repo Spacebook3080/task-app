@@ -6,6 +6,8 @@ const KEY_LEGACY = 'daily-task-manager-v1'; // 同期対応前のデータ
 const KEY_MIGRATED = 'dtm-legacy-migrated';
 const KEY_COLLAPSED = 'dtm-goal-collapsed'; // 目標ツリーで閉じている項目（この端末だけ）
 const KEY_REVIEW_DAY = 'dtm-review-day';    // 週の振り返りをする曜日（この端末だけ）
+const KEY_VIEW = 'dtm-view';                // 最後に開いていた画面（この端末だけ）
+const VIEWS = ['today', 'goals', 'prompts'];
 const WEEK = ['日','月','火','水','木','金','土'];
 const PRI_ORDER = { high: 0, mid: 1, low: 2 };
 
@@ -20,6 +22,7 @@ let queue = [];
 let current = todayStr();
 let filter = 'all';
 let mutations = 0; // pull 中に変更が入ったかを判定する
+let view = VIEWS.includes(lsGet(KEY_VIEW)) ? lsGet(KEY_VIEW) : 'today';
 
 const $ = id => document.getElementById(id);
 
@@ -181,7 +184,7 @@ async function pull() {
     next.aiMessages = ai ? ai.map(rowToAi) : (state.aiMessages || []);
     next.prompts = prompts ? prompts.map(rowToPrompt) : (state.prompts || []);
     state = next;
-    if ($('promptDialog').open) renderPrompts();
+    if (view === 'prompts') renderPrompts();
     saveCache();
     render();
     setSync('ok');
@@ -432,7 +435,7 @@ function render() {
           : `<button data-gtoday="${next.id}" title="今日のタスクに入れる">→今日</button>`}
       </div>` : ''}</li>`;
   }).join('');
-  if ($('goalDialog').open) renderGoalTree();
+  if (view === 'goals') renderGoalTree();
 
   renderReview();
   renderAi();
@@ -784,7 +787,7 @@ $('prevDay').onclick = () => { current = shift(current, -1); render(); };
 $('nextDay').onclick = () => { current = shift(current, 1); render(); };
 $('todayBtn').onclick = () => { current = todayStr(); render(); };
 document.addEventListener('keydown', e => {
-  if (e.target.matches('input, textarea, select') || document.querySelector('dialog[open]') || $('app').hidden) return;
+  if (view !== 'today' || e.target.matches('input, textarea, select') || document.querySelector('dialog[open]') || $('app').hidden) return;
   if (e.key === 'ArrowLeft') { current = shift(current, -1); render(); }
   if (e.key === 'ArrowRight') { current = shift(current, 1); render(); }
 });
@@ -856,7 +859,6 @@ function promptMsg(id, text, isErr) {
   clearTimeout(promptMsgTimer);
   if (!isErr) promptMsgTimer = setTimeout(() => { el.textContent = ''; }, 2500);
 }
-$('openPrompts').onclick = () => { promptFallback = null; renderPrompts(); $('promptDialog').showModal(); };
 $('promptForm').addEventListener('submit', e => {
   e.preventDefault();
   const title = $('promptTitle').value.trim();
@@ -1054,7 +1056,7 @@ function moveGoal(el, g) {
   sel.addEventListener('blur', finish);
   sel.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); finished = true; render(); } });
 }
-function openGoals() { renderGoalTree(); if (!$('goalDialog').open) $('goalDialog').showModal(); }
+function openGoals() { showView('goals'); }
 function saveCollapsed() { lsSet(KEY_COLLAPSED, [...collapsed]); }
 function newGoal(title, parentId, deadline) {
   const g = { id: uid(), parentId, title, deadline: deadline || '', done: false, doneAt: null, createdAt: Date.now() };
@@ -1062,7 +1064,6 @@ function newGoal(title, parentId, deadline) {
   commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
 }
 
-$('openGoals').onclick = openGoals;
 $('goalSummary').addEventListener('click', e => {
   const id = e.target.dataset.gtoday;
   if (id) goalToToday(state.goals.find(x => x.id === id)); else openGoals();
@@ -1172,7 +1173,30 @@ goalTree.addEventListener('dblclick', e => {
     commit([{ t: 'upsert', table: 'goals', row: goalRow(g) }]);
   });
 });
-$('goalDialog').addEventListener('close', () => { addingUnder = pastingUnder = null; pasteText = ''; });
+
+// ---------- 画面の切り替え（今日・目標・依頼） ----------
+function showView(v) {
+  if (!VIEWS.includes(v)) v = 'today';
+  // 目標の画面を離れたら、開きかけの追加欄・貼り付け欄はたたむ
+  if (view === 'goals' && v !== 'goals') { addingUnder = pastingUnder = null; pasteText = ''; }
+  const changed = view !== v;
+  view = v;
+  lsSet(KEY_VIEW, v);
+  document.querySelectorAll('.view').forEach(s => { s.hidden = s.id !== 'view-' + v; });
+  document.querySelectorAll('#nav [data-view]').forEach(b => {
+    b.classList.toggle('on', b.dataset.view === v);
+    if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  if (v === 'goals') renderGoalTree();
+  if (v === 'prompts') { promptFallback = null; renderPrompts(); }
+  if (changed) window.scrollTo(0, 0);
+}
+$('nav').addEventListener('click', e => {
+  const b = e.target.closest('[data-view]');
+  if (b) showView(b.dataset.view);
+});
+$('navRoutines').onclick = () => $('openRoutines').click();
+$('navData').onclick = () => $('openData').click();
 
 // ---------- 設定・バックアップ ----------
 $('openData').onclick = () => {
@@ -1556,7 +1580,7 @@ $('pwForm').addEventListener('submit', async e => {
 });
 
 // ---------- 起動 ----------
-function showApp() { $('auth').hidden = true; $('app').hidden = false; render(); }
+function showApp() { $('auth').hidden = true; $('app').hidden = false; render(); showView(view); }
 function showAuth() { $('app').hidden = true; $('auth').hidden = false; authMsg(''); }
 
 async function enterApp() {

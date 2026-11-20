@@ -54,6 +54,38 @@
     max-width: 720px; margin: 0 auto;
     padding: calc(20px + env(safe-area-inset-top)) 16px calc(64px + env(safe-area-inset-bottom));
   }
+  /* 画面の切り替え（PC は左のサイドバー、狭い画面は下のタブ） */
+  .nav { display: flex; background: var(--card); z-index: 10; }
+  .nav button {
+    display: flex; align-items: center; gap: 10px; background: none; border: none; border-radius: 8px;
+    color: var(--muted); font: inherit; cursor: pointer; text-align: left;
+  }
+  .nav button:hover { color: var(--text); }
+  .nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .nav .ico { font-size: 18px; line-height: 1; }
+  @media (min-width: 768px) {
+    #app { padding-left: 168px; }
+    .nav {
+      position: fixed; top: 0; left: 0; bottom: 0; width: 168px; flex-direction: column; gap: 4px;
+      padding: calc(20px + env(safe-area-inset-top)) 12px 20px calc(12px + env(safe-area-inset-left));
+      border-right: 1px solid var(--line);
+    }
+    .nav button { padding: 10px 12px; font-size: 15px; }
+    .nav-sep { border-top: 1px solid var(--line); margin: 8px 4px; }
+    .mobile-only { display: none; }
+  }
+  @media (max-width: 767px) {
+    .nav {
+      position: fixed; left: 0; right: 0; bottom: 0; border-top: 1px solid var(--line);
+      padding: 4px 8px env(safe-area-inset-bottom);
+    }
+    .nav button { flex: 1; flex-direction: column; gap: 2px; padding: 6px 0; font-size: 11px; align-items: center; background: none; }
+    .nav button.on { background: none; }
+    .nav .ico { font-size: 22px; }
+    .side-only { display: none !important; }
+    .wrap { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  }
+
   header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 16px; }
   h1 { font-size: 20px; margin: 0; white-space: nowrap; }
   .sync { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
@@ -245,18 +277,27 @@
   </div>
 </dialog>
 
-<div class="wrap" id="app" hidden>
+<div id="app" hidden>
+<!-- PC では左のサイドバー、狭い画面では下のタブになる -->
+<nav class="nav" id="nav" aria-label="画面の切り替え">
+  <button data-view="today"><span class="ico">📅</span><span>今日</span></button>
+  <button data-view="goals"><span class="ico">🎯</span><span>目標</span></button>
+  <button data-view="prompts"><span class="ico">📋</span><span>依頼</span></button>
+  <div class="nav-sep side-only"></div>
+  <button class="side-only" id="navRoutines"><span class="ico">🔁</span><span>習慣</span></button>
+  <button class="side-only" id="navData"><span class="ico">⚙</span><span>設定</span></button>
+</nav>
+<div class="wrap">
   <header>
     <h1>📋 毎日のタスク<span class="sync" id="syncStatus"></span></h1>
     <div style="display:flex;gap:6px">
       <button class="icon-btn" id="openAi" title="Claude からの振り返り" hidden>🤖</button>
-      <button class="icon-btn" id="openGoals" title="長期の目標">🎯 目標</button>
-      <button class="icon-btn" id="openRoutines" title="毎日の習慣を設定">🔁 習慣</button>
-      <button class="icon-btn" id="openPrompts" title="Deep Research などへの依頼リスト">📋 依頼</button>
-      <button class="icon-btn" id="openData" title="設定・バックアップ">⚙</button>
+      <button class="icon-btn mobile-only" id="openRoutines" title="毎日の習慣を設定">🔁 習慣</button>
+      <button class="icon-btn mobile-only" id="openData" title="設定・バックアップ">⚙</button>
     </div>
   </header>
 
+<section class="view" id="view-today">
   <div class="datebar">
     <button class="icon-btn" id="prevDay" aria-label="前の日">◀</button>
     <div class="date" id="dateLabel"></div>
@@ -341,6 +382,36 @@
     <h2>📝 メモ</h2>
     <textarea class="memo" id="memo" placeholder="この日のメモ・振り返り"></textarea>
   </div>
+</section>
+
+<section class="view" id="view-goals" hidden>
+  <div class="card">
+    <h2>🎯 ビジョンと目標</h2>
+    <p class="muted" style="margin-top:0">いちばん上に「こうなりたい」というビジョンを書き、「＋」で期限つきの目標 → ステップへと分けます。ステップは「→今日」で今日のタスクに入れられます。🤖 で Claude に分け方を相談、↪ で別の場所へ移せます。</p>
+    <form class="row" id="goalForm">
+      <input type="text" id="goalTitle" placeholder="ビジョン（例：英語で仕事ができる人になる）" required autocomplete="off">
+      <label class="due-field" title="期限（任意）">📅 期限 <input type="date" id="goalDeadline"></label>
+      <button class="primary" type="submit">追加</button>
+    </form>
+    <ul class="list goal-tree" id="goalTree"></ul>
+  </div>
+</section>
+
+<section class="view" id="view-prompts" hidden>
+  <div class="card">
+    <h2>📋 依頼リスト</h2>
+    <p class="muted" style="margin-top:0">Gemini の Deep Research などに頼みたい文章をためておけます。項目を押すと本文がコピーされるので、Gemini に貼り付けて送ってください。</p>
+    <form id="promptForm" class="prompt-form">
+      <input type="text" id="promptTitle" placeholder="タイトル（例：固体電解質の最近の研究）" required autocomplete="off">
+      <textarea id="promptBody" rows="4" placeholder="依頼文（そのままコピーされます）" required></textarea>
+      <div class="row" style="margin:0"><button class="primary" type="submit">追加</button></div>
+    </form>
+  </div>
+  <div class="card">
+    <ul class="list prompt-list" id="promptList"></ul>
+  </div>
+</section>
+</div>
 </div>
 
 <dialog id="routineDialog">
@@ -358,40 +429,10 @@
   </div>
 </dialog>
 
-<dialog id="promptDialog" class="wide">
-  <h3>📋 依頼リスト</h3>
-  <p class="muted" style="margin-top:0">Gemini の Deep Research などに頼みたい文章をためておけます。項目を押すと本文がコピーされるので、Gemini に貼り付けて送ってください。</p>
-  <form id="promptForm" class="prompt-form">
-    <input type="text" id="promptTitle" placeholder="タイトル（例：固体電解質の最近の研究）" required autocomplete="off">
-    <textarea id="promptBody" rows="4" placeholder="依頼文（そのままコピーされます）" required></textarea>
-    <div class="row" style="margin:0"><button class="primary" type="submit">追加</button></div>
-  </form>
-  <ul class="list prompt-list" id="promptList"></ul>
-  <div class="dialog-foot">
-    <span></span>
-    <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
-  </div>
-</dialog>
-
 <dialog id="aiDialog" class="wide">
   <h3>🤖 Claude からの振り返り</h3>
   <p class="muted" style="margin-top:0">これまでに届いた振り返りです。日付を押すと開きます。</p>
   <div id="aiHistory"></div>
-  <div class="dialog-foot">
-    <span></span>
-    <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
-  </div>
-</dialog>
-
-<dialog id="goalDialog" class="wide">
-  <h3>🎯 ビジョンと目標</h3>
-  <p class="muted" style="margin-top:0">いちばん上に「こうなりたい」というビジョンを書き、「＋」で期限つきの目標 → ステップへと分けます。ステップは「→今日」で今日のタスクに入れられます。🤖 で Claude に分け方を相談、↪ で別の場所へ移せます。</p>
-  <form class="row" id="goalForm">
-    <input type="text" id="goalTitle" placeholder="ビジョン（例：英語で仕事ができる人になる）" required autocomplete="off">
-    <label class="due-field" title="期限（任意）">📅 期限 <input type="date" id="goalDeadline"></label>
-    <button class="primary" type="submit">追加</button>
-  </form>
-  <ul class="list goal-tree" id="goalTree"></ul>
   <div class="dialog-foot">
     <span></span>
     <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
