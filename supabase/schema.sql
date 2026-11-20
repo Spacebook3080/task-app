@@ -200,3 +200,16 @@ select cron.schedule('morning-push', '*/5 * * * *', $$
     body := '{"action": "cron"}'::jsonb
   );
 $$);
+
+-- 依頼リスト（Gemini の Deep Research などに貼る文章。アプリはコピーするだけで、送るのは手動）
+create table if not exists public.prompts (
+  id          text primary key,
+  user_id     uuid not null default auth.uid() references auth.users on delete cascade,
+  title       text not null,
+  body        text not null,
+  created_at  timestamptz not null default now()
+);
+alter table public.prompts enable row level security;
+drop policy if exists "own prompts" on public.prompts;
+create policy "own prompts" on public.prompts
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

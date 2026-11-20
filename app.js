@@ -24,7 +24,7 @@ let mutations = 0; // pull 中に変更が入ったかを判定する
 const $ = id => document.getElementById(id);
 
 // ---------- 小物 ----------
-function emptyState() { return { tasks: [], routines: [], routineDone: {}, notes: {}, goals: [], aiMessages: [] }; }
+function emptyState() { return { tasks: [], routines: [], routineDone: {}, notes: {}, goals: [], aiMessages: [], prompts: [] }; }
 function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
@@ -86,6 +86,11 @@ function rowToAi(r) {
     createdAt: Date.parse(r.created_at), readAt: r.read_at ? Date.parse(r.read_at) : null
   };
 }
+// 依頼リスト（Gemini の Deep Research などに貼る文章。送るのは手動）
+function promptRow(p) {
+  return { id: p.id, user_id: userId(), title: p.title, body: p.body, created_at: iso(p.createdAt) };
+}
+function rowToPrompt(r) { return { id: r.id, title: r.title, body: r.body, createdAt: Date.parse(r.created_at) }; }
 
 // ---------- 保存と同期 ----------
 function saveCache() { lsSet(KEY_CACHE, { user: userId(), state }); }
@@ -156,14 +161,15 @@ async function pull() {
     if (queue.length) return; // 送れていない変更がある間は上書きしない
     setSync('syncing');
     const before = mutations;
-    const [tasks, routines, logs, notes, goals, ai] = await Promise.all([
+    const [tasks, routines, logs, notes, goals, ai, prompts] = await Promise.all([
       fetchAll('tasks', '*', 'id'),
       fetchAll('routines', 'id,title,days,created_at', 'created_at'),
       fetchAll('routine_logs', 'routine_id,date', 'date'),
       fetchAll('notes', 'date,body', 'date'),
       // 目標のテーブルがまだ無くても、ほかのデータは読めるようにする
       fetchAll('goals', '*', 'created_at').catch(e => { console.warn(e); return null; }),
-      fetchAll('ai_messages', '*', 'created_at').catch(e => { console.warn(e); return null; })
+      fetchAll('ai_messages', '*', 'created_at').catch(e => { console.warn(e); return null; }),
+      fetchAll('prompts', '*', 'created_at').catch(e => { console.warn(e); return null; })
     ]);
     if (mutations !== before) { setTimeout(pull, 1000); return; } // 取得中に変更されたら取り直す
     const next = emptyState();
@@ -173,7 +179,9 @@ async function pull() {
     notes.forEach(n => { next.notes[n.date] = n.body; });
     next.goals = goals ? goals.map(rowToGoal) : state.goals;
     next.aiMessages = ai ? ai.map(rowToAi) : (state.aiMessages || []);
+    next.prompts = prompts ? prompts.map(rowToPrompt) : (state.prompts || []);
     state = next;
+    if ($('promptDialog').open) renderPrompts();
     saveCache();
     render();
     setSync('ok');
@@ -240,6 +248,14 @@ function mergeData(data) {
     noteRows.push({ user_id: userId(), date, body, updated_at: new Date().toISOString() });
   });
   if (noteRows.length) ops.push({ t: 'upsert', table: 'notes', row: noteRows });
+
+  const prompts = (data.prompts || []).filter(p => p && p.id && p.title && p.body);
+  prompts.forEach(p => {
+    const item = { id: p.id, title: p.title, body: p.body, createdAt: p.createdAt || Date.now() };
+    const i = state.prompts.findIndex(x => x.id === p.id);
+    if (i >= 0) state.prompts[i] = item; else state.prompts.push(item);
+  });
+  if (prompts.length) ops.push({ t: 'upsert', table: 'prompts', row: prompts.map(p => promptRow(state.prompts.find(x => x.id === p.id))) });
 
   commit(ops);
 }
@@ -810,6 +826,75 @@ $('routineEditList').addEventListener('click', e => {
   renderRoutineEdit();
 });
 
+// ---------- 依頼リスト（Deep Research などへの依頼文。コピーして手で貼る） ----------
+let promptFallback = null; // 自動でコピーできなかった項目（本文を選んだ状態で見せる）
+let promptMsgTimer = null;
+function renderPrompts() {
+  const list = [...(state.prompts || [])].sort((a, b) => b.createdAt - a.createdAt);
+  $('promptList').innerHTML = list.length ? list.map(p => `<li data-pid="${p.id}">
+      <button class="prompt-main" data-pcopy="${p.id}" title="押すと本文をコピー">
+        <span class="title">${esc(p.title)}</span>
+        <span class="prompt-preview">${esc(p.body)}</span>
+      </button>
+      <span class="actions" style="opacity:1">
+        <button class="prompt-copy" data-pcopy="${p.id}">コピー</button>
+        <button data-pdel="${p.id}" title="削除">✕</button>
+      </span>
+      <span class="prompt-msg" id="pmsg-${p.id}" role="status"></span>
+      ${promptFallback === p.id ? `<textarea class="prompt-fallback" readonly>${esc(p.body)}</textarea>` : ''}
+    </li>`).join('') : '<li class="empty">まだありません。上に「タイトル」と「依頼文」を入れて追加してください</li>';
+  if (promptFallback) {
+    const ta = $('promptList').querySelector('.prompt-fallback');
+    if (ta) { ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length); }
+  }
+}
+function promptMsg(id, text, isErr) {
+  const el = $('pmsg-' + id);
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('err', !!isErr);
+  clearTimeout(promptMsgTimer);
+  if (!isErr) promptMsgTimer = setTimeout(() => { el.textContent = ''; }, 2500);
+}
+$('openPrompts').onclick = () => { promptFallback = null; renderPrompts(); $('promptDialog').showModal(); };
+$('promptForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const title = $('promptTitle').value.trim();
+  const body = $('promptBody').value.trim();
+  if (!title || !body) return;
+  const p = { id: uid(), title, body, createdAt: Date.now() };
+  state.prompts.push(p);
+  $('promptTitle').value = ''; $('promptBody').value = '';
+  commit([{ t: 'upsert', table: 'prompts', row: promptRow(p) }]);
+  renderPrompts();
+});
+$('promptList').addEventListener('click', async e => {
+  const del = e.target.closest('[data-pdel]');
+  if (del) {
+    const p = state.prompts.find(x => x.id === del.dataset.pdel);
+    if (!p || !confirm(`「${p.title}」を削除しますか？`)) return;
+    state.prompts = state.prompts.filter(x => x.id !== p.id);
+    if (promptFallback === p.id) promptFallback = null;
+    commit([{ t: 'delete', table: 'prompts', match: { id: p.id } }]);
+    renderPrompts();
+    return;
+  }
+  const btn = e.target.closest('[data-pcopy]');
+  if (!btn) return;
+  const p = state.prompts.find(x => x.id === btn.dataset.pcopy);
+  if (!p) return;
+  const ok = await copyText(p.body);
+  if (ok) {
+    if (promptFallback === p.id) { promptFallback = null; renderPrompts(); }
+    promptMsg(p.id, '✓ コピーしました。Gemini に貼り付けてください');
+  } else {
+    // 自動でコピーできない（権限・http で開いている など）→ 本文を選んだ状態で出して、手でコピーしてもらう
+    promptFallback = p.id;
+    renderPrompts();
+    promptMsg(p.id, '⚠ 自動でコピーできませんでした。下の文章が選ばれた状態なので、Ctrl+C（iPhone は長押し →「コピー」）でコピーしてください', true);
+  }
+});
+
 // ---------- 目標の設定（ツリー） ----------
 let collapsed = new Set(lsGet(KEY_COLLAPSED) || []);
 let addingUnder = null; // 下にステップを追加している目標
@@ -893,10 +978,17 @@ function openClaude(text) {
   return copying;
 }
 async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  // https か localhost でないと navigator.clipboard は無い。権限で断られることもある
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) { console.warn('clipboard', e); }
+  }
+  // 予備：昔ながらの方法。開いているダイアログの外の要素は選べないので、ダイアログの中に置く
+  const host = document.querySelector('dialog[open]') || document.body;
   const ta = document.createElement('textarea');
-  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-  document.body.appendChild(ta); ta.select();
+  ta.value = text; ta.readOnly = true;
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+  host.appendChild(ta);
+  ta.focus(); ta.select(); ta.setSelectionRange(0, text.length); // iPhone は setSelectionRange が要る
   let ok = false;
   try { ok = document.execCommand('copy'); } catch (e) {}
   ta.remove();

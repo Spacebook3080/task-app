@@ -168,6 +168,20 @@
   .ai-new { background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; }
   .ai-steps button { background: var(--accent-soft); color: var(--accent); border: none; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-family: inherit; cursor: pointer; flex: none; }
 
+  /* 依頼リスト */
+  .prompt-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+  .prompt-form textarea { width: 100%; resize: vertical; font-size: 14px; }
+  .prompt-list li { flex-wrap: wrap; }
+  .prompt-main { flex: 1 1 12em; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; background: none; border: none; padding: 4px; margin: -4px; border-radius: 8px; color: var(--text); font: inherit; cursor: pointer; }
+  .prompt-main:hover { background: var(--bg); }
+  .prompt-main .title { font-weight: 600; cursor: pointer; }
+  .prompt-preview { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+  .actions .prompt-copy { background: var(--accent-soft); color: var(--accent); }
+  .prompt-msg { flex-basis: 100%; font-size: 12px; color: var(--low); }
+  .prompt-msg:empty { display: none; }
+  .prompt-msg.err { color: var(--high); }
+  .prompt-fallback { flex-basis: 100%; width: 100%; min-height: 100px; font-size: 13px; }
+
   /* 週の振り返り */
   .review-stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; margin-bottom: 8px; }
   .review-stats b { font-size: 18px; }
@@ -238,6 +252,7 @@
       <button class="icon-btn" id="openAi" title="Claude からの振り返り" hidden>🤖</button>
       <button class="icon-btn" id="openGoals" title="長期の目標">🎯 目標</button>
       <button class="icon-btn" id="openRoutines" title="毎日の習慣を設定">🔁 習慣</button>
+      <button class="icon-btn" id="openPrompts" title="Deep Research などへの依頼リスト">📋 依頼</button>
       <button class="icon-btn" id="openData" title="設定・バックアップ">⚙</button>
     </div>
   </header>
@@ -337,6 +352,21 @@
   </form>
   <div class="days" id="routineDays"></div>
   <ul class="list" id="routineEditList" style="margin-top:12px"></ul>
+  <div class="dialog-foot">
+    <span></span>
+    <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
+  </div>
+</dialog>
+
+<dialog id="promptDialog" class="wide">
+  <h3>📋 依頼リスト</h3>
+  <p class="muted" style="margin-top:0">Gemini の Deep Research などに頼みたい文章をためておけます。項目を押すと本文がコピーされるので、Gemini に貼り付けて送ってください。</p>
+  <form id="promptForm" class="prompt-form">
+    <input type="text" id="promptTitle" placeholder="タイトル（例：固体電解質の最近の研究）" required autocomplete="off">
+    <textarea id="promptBody" rows="4" placeholder="依頼文（そのままコピーされます）" required></textarea>
+    <div class="row" style="margin:0"><button class="primary" type="submit">追加</button></div>
+  </form>
+  <ul class="list prompt-list" id="promptList"></ul>
   <div class="dialog-foot">
     <span></span>
     <button class="icon-btn" onclick="this.closest('dialog').close()">閉じる</button>
