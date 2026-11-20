@@ -1408,29 +1408,40 @@ async function loadAiToken() {
   $('aiBox').hidden = !session;
   $('aiTokenOut').hidden = true;
   if (!session) return;
-  const { data, error } = await sb.from('ai_tokens').select('created_at').order('created_at', { ascending: false }).limit(1);
+  const { data, error } = await sb.from('ai_tokens').select('created_at').order('created_at', { ascending: false });
   if (error) { $('aiTokenMsg').textContent = 'まだ準備ができていません（Supabase で SQL を実行してください）。'; $('aiTokenBtn').disabled = true; return; }
   $('aiTokenBtn').disabled = false;
-  const made = data && data[0] && new Date(data[0].created_at);
+  const count = data ? data.length : 0;
+  const made = count && new Date(data[0].created_at);
   $('aiTokenBtn').textContent = made ? '合言葉を作り直す' : '合言葉を作る';
+  $('aiTokenAddBtn').hidden = !made;
   $('aiTokenMsg').textContent = made
-    ? `合言葉は ${made.getMonth() + 1}/${made.getDate()} に作ってあります。作り直すと、前の合言葉は使えなくなります。`
+    ? `合言葉は ${count} 個あります（最後に作ったのは ${made.getMonth() + 1}/${made.getDate()}）。`
+      + '「作り直す」と全部使えなくなります。別の場所（PC など）で使うときは「もう 1 つ作る」を押してください。'
     : '作った合言葉を、claude.ai のネットワークシークレットに登録します。';
 }
-$('aiTokenBtn').onclick = async () => {
-  if ($('aiTokenBtn').textContent.includes('作り直す') && !confirm('合言葉を作り直しますか？\nclaude.ai に登録した合言葉も入れかえる必要があります。')) return;
+// replaceAll が true なら、今ある合言葉を全部消してから作る
+async function makeAiToken(replaceAll) {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   const token = 'ai_' + btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  const del = await sb.from('ai_tokens').delete().eq('user_id', userId());
+  const del = replaceAll ? await sb.from('ai_tokens').delete().eq('user_id', userId()) : { error: null };
   const ins = del.error ? del : await sb.from('ai_tokens').insert({ token_hash: await sha256Hex(token), user_id: userId() });
   if (ins.error) { $('aiTokenMsg').textContent = '作れませんでした：' + ins.error.message; return; }
+  await loadAiToken();
   $('aiTokenOut').value = token;
   $('aiTokenOut').hidden = false;
   $('aiTokenOut').select();
   const ok = await copyText(token);
-  $('aiTokenBtn').textContent = '合言葉を作り直す';
   $('aiTokenMsg').textContent = (ok ? 'コピーしました。' : '上の合言葉を選んでコピーしてください。')
-    + 'この合言葉は今だけ表示されます。claude.ai に登録したら、ほかの場所には貼らないでください。';
+    + 'この合言葉は今だけ表示されます。使う場所に登録したら、ほかの場所には貼らないでください。';
+}
+$('aiTokenBtn').onclick = async () => {
+  if ($('aiTokenBtn').textContent.includes('作り直す') && !confirm('合言葉を作り直しますか？\n今ある合言葉は全部使えなくなります（claude.ai や PC に登録したものも入れかえが必要です）。')) return;
+  await makeAiToken(true);
+};
+$('aiTokenAddBtn').onclick = async () => {
+  if (!confirm('合言葉をもう 1 つ作りますか？\n今ある合言葉はそのまま使えます。')) return;
+  await makeAiToken(false);
 };
 
 // ---------- 毎朝の通知（Web Push） ----------
