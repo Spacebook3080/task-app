@@ -73,6 +73,7 @@
     .nav button { padding: 10px 12px; font-size: 15px; }
     .nav-sep { border-top: 1px solid var(--line); margin: 8px 4px; }
     .mobile-only { display: none; }
+    #goalCard { display: none !important; } /* PC は目標のタブがいつも見えるので、今日の画面には出さない */
   }
   @media (max-width: 767px) {
     .nav {
@@ -493,6 +494,27 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+// 読み込みに失敗して真っ白（真っ黒）な画面のままにならないように、5 秒たっても何も出ていなければ知らせる
+window.__bootErr = '';
+window.addEventListener('error', e => { if (!window.__bootErr) window.__bootErr = String(e.message || e); });
+setTimeout(() => {
+  const a = document.getElementById('app'), b = document.getElementById('auth');
+  if (!a.hidden || !b.hidden) return;
+  const box = document.createElement('div');
+  box.style.cssText = 'max-width:380px;margin:0 auto;padding:calc(64px + env(safe-area-inset-top)) 16px;text-align:center';
+  box.innerHTML = '<p>画面を読み込めませんでした。</p><p class="muted" id="bootErr"></p>' +
+    '<button class="primary" id="bootReload">読み込み直す</button>';
+  document.body.appendChild(box);
+  document.getElementById('bootErr').textContent = window.__bootErr;
+  document.getElementById('bootReload').onclick = async () => {
+    // 古いファイルを持っているかもしれないので、取っておいたファイルを消してから開き直す
+    try { await Promise.all((await caches.keys()).map(k => caches.delete(k))); } catch (e) {}
+    try { await Promise.all((await navigator.serviceWorker.getRegistrations()).map(r => r.update())); } catch (e) {}
+    location.reload();
+  };
+}, 5000);
+</script>
 <script src="config.js"></script>
 <script src="app.js"></script>
 </body>

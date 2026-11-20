@@ -1,5 +1,5 @@
 // オフラインでもアプリを開けるようにするための Service Worker
-const CACHE = 'dtm-v3';
+const CACHE = 'dtm-v4';
 const SUPABASE_LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
 const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png', SUPABASE_LIB];
 
@@ -25,10 +25,12 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(req).then(r => r || fetch(req)));
     return;
   }
-  // 自分のファイルはネット優先（更新がすぐ反映されるように）、つながらなければキャッシュ
+  // 自分のファイルはネット優先（更新がすぐ反映されるように）、つながらなければキャッシュ。
+  // GitHub Pages は 10 分キャッシュしてよいと返すので、そのままだと新しい index.html と古い app.js が
+  // 混ざって画面が出なくなる（2026-11-20 に iPhone で発生）。no-cache で毎回サーバーに確かめる
   if (url.origin === location.origin) {
     e.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-cache' })
         .then(res => {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(req, copy));
