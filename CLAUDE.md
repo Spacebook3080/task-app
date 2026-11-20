@@ -28,7 +28,7 @@
 
 ## 2 台の PC で開発している
 - ノート PC（LAPTOP-2K2H9E2A）: `C:\Users\Axely\Desktop\タスク管理`
-- 自宅デスクトップ PC（DESKTOP-BS96LUJ、メインにする予定）: `C:\Users\Axely\OneDrive\デスクトップ\タスク管理`
+- 自宅デスクトップ PC（DESKTOP-BS96LUJ、メイン。2026-11-20 に移行）: `C:\Users\Axely\OneDrive\デスクトップ\タスク管理`
 - 作業を始めるときは、まず `git pull` で、もう 1 台での変更を取り込む
 - 区切りがついたら commit して `git push` まで行う。push していない変更は、もう 1 台からは見えない
 - iPhone からはリモートコントロールで操作する
