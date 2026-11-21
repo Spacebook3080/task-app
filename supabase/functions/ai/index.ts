@@ -2,12 +2,14 @@
 // Supabase の画面（Edge Functions → Deploy a new function → Via Editor）で、名前を ai にしてこのファイルを貼り付ける。
 // 「Verify JWT」はオフにする（Claude はログインせず、アプリで作った合言葉で呼ぶため）。
 //
-// 合言葉は「Authorization: Bearer <合言葉>」で受け取る。できることは次の 3 つだけ:
+// 合言葉は「Authorization: Bearer <合言葉>」で受け取る。できることは次の 4 つだけ:
 //   { action: 'week' } … 今日までの 7 日間の記録（目標・終えたタスク・習慣・メモ）を返す
 //   { action: 'post', body, steps, period_end } … 振り返りの文とステップ案を「Claude から」の便りとして保存し、通知する
 //   { action: 'task', title, tag, dedupe, date } … タスクを 1 つ追加する（復習カードのお知らせ・ユイからのタスク用）。
 //       date（YYYY-MM-DD）を省くと今日。指定できるのは今日から 1 年先まで
 //       dedupe を付けると、その日すでに dedupe で始まる名前のタスクがあれば追加しない（二重登録を防ぐ）
+//   { action: 'prompt', title, body, notify } … 依頼リスト（Gemini の Deep Research などへの依頼文）に 1 つ追加し、通知する。
+//       同じタイトルがもうあれば追加しない。notify: false で通知しない
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import webpush from 'npm:web-push@3.6.7';
 
@@ -149,7 +151,22 @@ Deno.serve(async req => {
       return json({ ok: true, id, date });
     }
 
-    return json({ error: 'action は week・post・task のどれかにしてください' }, 400);
+    // 依頼リストに 1 つ追加する（ユイや Claude との会話で出てきた Deep Research の依頼文など）
+    if (input.action === 'prompt') {
+      const title = String(input.title || '').trim().slice(0, 100);
+      const body = String(input.body || '').trim();
+      if (!title || !body) return json({ error: 'title（タイトル）と body（依頼文）の両方が要ります' }, 400);
+      if (body.length > MAX_BODY) return json({ error: `body は ${MAX_BODY} 文字までにしてください` }, 400);
+      const { data: same } = await admin.from('prompts').select('id').eq('user_id', userId).eq('title', title).limit(1);
+      if (same?.length) return json({ ok: true, skipped: true, reason: '同じタイトルの依頼がもうある', id: same[0].id });
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      const { error } = await admin.from('prompts').insert({ id, user_id: userId, title, body });
+      if (error) throw error;
+      const sent = input.notify === false ? 0 : await notify(userId, '📋 依頼リストに追加されました', title);
+      return json({ ok: true, id, notified: sent });
+    }
+
+    return json({ error: 'action は week・post・task・prompt のどれかにしてください' }, 400);
   } catch (e) {
     console.error(e);
     return json({ error: String((e as Error).message || e) }, 500);

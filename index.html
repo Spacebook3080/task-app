@@ -401,9 +401,9 @@
 <section class="view" id="view-prompts" hidden>
   <div class="card">
     <h2>📋 依頼リスト</h2>
-    <p class="muted" style="margin-top:0">Gemini の Deep Research などに頼みたい文章をためておけます。項目を押すと本文がコピーされるので、Gemini に貼り付けて送ってください。</p>
+    <p class="muted" style="margin-top:0">Gemini の Deep Research などに頼みたい文章をためておけます。項目を押すと本文がコピーされて Gemini が開くので、貼り付けて送ってください。ユイや Claude が見つけた依頼もここに届きます。</p>
     <form id="promptForm" class="prompt-form">
-      <input type="text" id="promptTitle" placeholder="タイトル（例：固体電解質の最近の研究）" required autocomplete="off">
+      <input type="text" id="promptTitle" placeholder="タイトル（空なら本文の 1 行目）" autocomplete="off">
       <textarea id="promptBody" rows="4" placeholder="依頼文（そのままコピーされます）" required></textarea>
       <div class="row" style="margin:0"><button class="primary" type="submit">追加</button></div>
     </form>

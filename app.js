@@ -830,17 +830,19 @@ $('routineEditList').addEventListener('click', e => {
 });
 
 // ---------- 依頼リスト（Deep Research などへの依頼文。コピーして手で貼る） ----------
+const GEMINI_URL = 'https://gemini.google.com/app';
 let promptFallback = null; // 自動でコピーできなかった項目（本文を選んだ状態で見せる）
 let promptMsgTimer = null;
 function renderPrompts() {
   const list = [...(state.prompts || [])].sort((a, b) => b.createdAt - a.createdAt);
   $('promptList').innerHTML = list.length ? list.map(p => `<li data-pid="${p.id}">
-      <button class="prompt-main" data-pcopy="${p.id}" title="押すと本文をコピー">
+      <button class="prompt-main" data-pgo="${p.id}" title="押すと本文をコピーして Gemini を開く">
         <span class="title">${esc(p.title)}</span>
         <span class="prompt-preview">${esc(p.body)}</span>
       </button>
       <span class="actions" style="opacity:1">
-        <button class="prompt-copy" data-pcopy="${p.id}">コピー</button>
+        <button class="prompt-copy" data-pgo="${p.id}" title="本文をコピーして Gemini を開く">✨ Gemini</button>
+        <button data-pcopy="${p.id}" title="コピーだけする">コピー</button>
         <button data-pdel="${p.id}" title="削除">✕</button>
       </span>
       <span class="prompt-msg" id="pmsg-${p.id}" role="status"></span>
@@ -861,9 +863,11 @@ function promptMsg(id, text, isErr) {
 }
 $('promptForm').addEventListener('submit', e => {
   e.preventDefault();
-  const title = $('promptTitle').value.trim();
+  let title = $('promptTitle').value.trim();
   const body = $('promptBody').value.trim();
-  if (!title || !body) return;
+  if (!body) return;
+  // タイトルを空にしたら、本文の 1 行目をタイトルにする（Claude の返事をそのまま貼るとき用）
+  if (!title) title = body.split(/\r?\n/).find(l => l.trim()).replace(/^[#\s*【「]+|[】」*\s]+$/g, '').slice(0, 40) || '依頼';
   const p = { id: uid(), title, body, createdAt: Date.now() };
   state.prompts.push(p);
   $('promptTitle').value = ''; $('promptBody').value = '';
@@ -881,14 +885,18 @@ $('promptList').addEventListener('click', async e => {
     renderPrompts();
     return;
   }
-  const btn = e.target.closest('[data-pcopy]');
+  const btn = e.target.closest('[data-pcopy],[data-pgo]');
   if (!btn) return;
-  const p = state.prompts.find(x => x.id === btn.dataset.pcopy);
+  const go = !!btn.dataset.pgo;
+  const p = state.prompts.find(x => x.id === (btn.dataset.pgo || btn.dataset.pcopy));
   if (!p) return;
-  const ok = await copyText(p.body);
+  // コピーを始めてから、待たずに Gemini を開く（iPhone は押した直後でないと新しい画面を開かせてくれない）
+  const copying = copyText(p.body);
+  if (go) window.open(GEMINI_URL, '_blank', 'noopener');
+  const ok = await copying;
   if (ok) {
     if (promptFallback === p.id) { promptFallback = null; renderPrompts(); }
-    promptMsg(p.id, '✓ コピーしました。Gemini に貼り付けてください');
+    promptMsg(p.id, go ? '✓ コピーして Gemini を開きました。Deep Research を選んで貼り付けてください' : '✓ コピーしました。Gemini に貼り付けてください');
   } else {
     // 自動でコピーできない（権限・http で開いている など）→ 本文を選んだ状態で出して、手でコピーしてもらう
     promptFallback = p.id;
