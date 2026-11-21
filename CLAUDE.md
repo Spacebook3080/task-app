@@ -59,7 +59,7 @@
    - Supabase コネクタ（何でもできてしまう）と Google ドライブ経由（アプリに Google ログインが必要）は比べた上で見送り
    - 2026-11-11: 窓口 `ai` に `task`（今日のタスクを 1 つ追加。`dedupe` で二重登録を防ぐ）を追加。スケジュールタスク「復習カードのお知らせ」が毎朝 `supabase/claude-review-cards.md` の手順で、すごろく開発の復習カード（https://claude.ai/artifact/8K2ik58V6Uqr7uCkLDMxbd）に今日の分があれば「📚 コード復習カード（N枚）」を入れる
    - 2026-11-20: `task` に `date`（今日〜1 年先、省くと今日）を追加。ai-renkei（`C:\Users\Axely\Ai連携用`、Private）の muse＝ユイとつなぐため。ユイが `app-task` ラベルの Issue を出すと、ai-renkei の見張り役（`scripts/mailbox-watch.ps1`、10 分おき）が Claude を起こさずに `task` を呼び、カテゴリ `🌸ユイ` のタスクにする。合言葉はその PC の `%LOCALAPPDATA%\ai-renkei-mailbox\task-app-token.dat` に暗号化して置く（`scripts/set-task-app-token.ps1`）。詳しくは ai-renkei の `tasks/023.md`
-   - 2026-11-21: 窓口 `ai` に `prompt`（依頼リストに title＋body を 1 つ追加して通知。同じタイトルがあれば追加しない）を追加。ユイや Claude との会話で出た Deep Research の依頼をアプリに送るため。**関数 `ai` の再配置はまだ**（Supabase の画面で貼り直しが必要）。ai-renkei 側（例: `app-prompt` ラベルの Issue → `prompt` を呼ぶ）も未対応で、自宅デスクトップ PC で作る
+   - 2026-11-21: 窓口 `ai` に `prompt`（依頼リストに title＋body を 1 つ追加して通知。同じタイトルがあれば追加しない）を追加。ユイや Claude との会話で出た Deep Research の依頼をアプリに送るため。関数 `ai` は再配置済み（2026-11-21、合言葉なしで呼ぶと自前のエラーが返ることまで確認。`prompt` 自体は合言葉が要るので未確認）。ai-renkei 側（例: `app-prompt` ラベルの Issue → `prompt` を呼ぶ）も未対応で、自宅デスクトップ PC で作る
    - 保留: タスクや目標の進み具合をユイに渡す（ユイが GitHub のファイルを読めるか未確認）
 - 保留: 年間カレンダー（1 年分をマス目で表示し、タスクを終えた日ほど濃くする）、習慣の連続記録、週の予定表、締切前の通知
 
